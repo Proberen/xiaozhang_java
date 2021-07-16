@@ -382,7 +382,7 @@ MQ事务是对本地消息表的一层封装，将本地消息表移动到了MQ�
 
 
 
-<a href="/分布式/并发.mindnode">下载</a>
+<a href="/分布式/并发.mindnode" target="_blank">下载</a>
 
 
 
