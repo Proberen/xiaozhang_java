@@ -23,12 +23,12 @@
       subMaxLevel: 5, // 生成目录的最大层级
       mergeNavbar: true, // 小屏设备下合并导航栏到侧边栏
       topMargin: 40,
-      footer: {
-        copy: '<span id="sitetime"></span> <br> Copyright &copy; 2021 - 至今  </span>',
-        auth: ' <strong>🔖 Tao_xiaozhang</strong>',
-        pre: '',
-        style: 'text-align: left;',
-      },
+      // footer: {
+      //   copy: '<span id="sitetime"></span> <br> Copyright &copy; 2021 - 至今  </span>',
+      //   auth: ' <strong>🔖 Tao_xiaozhang</strong>',
+      //   pre: '',
+      //   style: 'text-align: left;',
+      // },
     } 
   </script>
   <script src="//unpkg.com/docsify/lib/docsify.min.js"></script>
@@ -66,13 +66,14 @@
       owner: 'Proberen',
       admin: ['Proberen'],
       id: location.pathname,
-      // facebook-like distraction free mode
       distractionFreeMode: false
     })
   </script>
 
   <!-- 访问量统计 -->
   <script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+  <!-- mouse click -->
+  <script src="//cdn.jsdelivr.net/gh/jerryc127/butterfly_cdn@2.1.0/js/click_heart.js"></script>
   <!-- 运行时间统计 -->
   <script language=javascript>
     function siteTime() {
