@@ -1,6 +1,6 @@
-![logo](https://docsify.js.org/_media/icon.svg)
+![logo](logo.png)
 
-# 小张笔记
+<!-- # 小张笔记 -->
 
 - 就是作者没事瞎写的笔记，不过内容绝对可靠，我发四👋
 * 嘿！我的杂货铺居然被你发现了～
