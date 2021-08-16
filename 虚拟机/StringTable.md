@@ -67,7 +67,7 @@ String a = "aa";
 
 例一：
 
-<img src="https://user-gold-cdn.xitu.io/2020/6/16/172bac675fab2b1f?imageView2/0/w/1280/h/960/ignore-error/1" alt="img" style="zoom:67%;" />
+<img src="https://p1-jj.byteimg.com/tos-cn-i-t2oaga2asx/gold-user-assets/2020/6/16/172bac675fab2b1f~tplv-t2oaga2asx-watermark.awebp" alt="img" style="zoom:50%;" />
 
 <hr/>
 
@@ -89,7 +89,9 @@ class Memory {
 }
 ```
 
-![img](https://user-gold-cdn.xitu.io/2020/6/16/172bac6cb643c9df?imageView2/0/w/1280/h/960/ignore-error/1)
+
+
+<img src="https://p1-jj.byteimg.com/tos-cn-i-t2oaga2asx/gold-user-assets/2020/6/16/172bac6cb643c9df~tplv-t2oaga2asx-watermark.awebp" alt="img" style="zoom:50%;" />
 
 ## String的拼接操作
 
@@ -152,7 +154,7 @@ public void test2(){
 
 **2、针对final修饰类、方法、基本数据类型、引用数据类型时，能使用final就使用final**
 
-![img](https://user-gold-cdn.xitu.io/2020/6/16/172bac74e1331d1d?imageslim)
+![img](https://p1-jj.byteimg.com/tos-cn-i-t2oaga2asx/gold-user-assets/2020/6/16/172bac74e1331d1d~tplv-t2oaga2asx-watermark.awebp)
 
 **3、append的方式比拼接字符串更加高效**
 
@@ -242,9 +244,9 @@ public class StringIntern {
 }
 ```
 
-<img src="https://user-gold-cdn.xitu.io/2020/6/16/172bac960ae887a7?imageView2/0/w/1280/h/960/ignore-error/1" alt="6" style="zoom:50%;" />
+<img src="https://p1-jj.byteimg.com/tos-cn-i-t2oaga2asx/gold-user-assets/2020/6/16/172bac960ae887a7~tplv-t2oaga2asx-watermark.awebp" alt="6" style="zoom:50%;" />
 
-<img src="https://user-gold-cdn.xitu.io/2020/6/16/172bac97d066c47d?imageView2/0/w/1280/h/960/ignore-error/1" alt="7" style="zoom:50%;" />
+<img src="https://p1-jj.byteimg.com/tos-cn-i-t2oaga2asx/gold-user-assets/2020/6/16/172bac97d066c47d~tplv-t2oaga2asx-watermark.awebp" alt="7" style="zoom:50%;" />
 
 **拓展**
 
@@ -302,11 +304,11 @@ public class StringExer1 {
 
 **jdk6**
 
-<img src="https://user-gold-cdn.xitu.io/2020/6/16/172bac9a78f97a95?imageView2/0/w/1280/h/960/ignore-error/1" alt="8" style="zoom:50%;" />
+<img src="https://p1-jj.byteimg.com/tos-cn-i-t2oaga2asx/gold-user-assets/2020/6/16/172bac9a78f97a95~tplv-t2oaga2asx-watermark.awebp" alt="8" style="zoom: 33%;" />
 
 **jdk7/8**
 
-<img src="https://user-gold-cdn.xitu.io/2020/6/16/172bacadb3c78aec?imageView2/0/w/1280/h/960/ignore-error/1" alt="9" style="zoom:50%;" />
+<img src="https://p1-jj.byteimg.com/tos-cn-i-t2oaga2asx/gold-user-assets/2020/6/16/172bacadb3c78aec~tplv-t2oaga2asx-watermark.awebp" alt="9" style="zoom: 33%;" />
 
 ```java
 public class StringExer1 {
@@ -323,7 +325,7 @@ public class StringExer1 {
 
 
 
-<img src="https://user-gold-cdn.xitu.io/2020/6/16/172bacaf267e7da0?imageView2/0/w/1280/h/960/ignore-error/1" alt="10" style="zoom:50%;" />
+<img src="https://p1-jj.byteimg.com/tos-cn-i-t2oaga2asx/gold-user-assets/2020/6/16/172bacaf267e7da0~tplv-t2oaga2asx-watermark.awebp" alt="10" style="zoom: 33%;" />
 
 
 

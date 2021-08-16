@@ -30,7 +30,7 @@ HotSpot VM是高性能虚拟机的代表作之一
 
 3、执行引擎：高级语言翻译成机器语言
 
-<img src="https://user-gold-cdn.xitu.io/2020/3/18/170ec7cd31581d15?imageView2/0/w/1280/h/960/ignore-error/1" alt="img" style="zoom:67%;" />
+
 
 ## Java代码执行流程
 

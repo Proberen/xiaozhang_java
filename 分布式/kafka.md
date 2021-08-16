@@ -85,44 +85,144 @@ log.dirs=/usr/local/var/lib/kafka-logs
 log.retention.hours=168
 
 # 配置zookeeper
-zookeeper.connect=localhost:2181
+zookeeper.connect=localhost:2181/kafka
 ```
 
 3、启动zookeeper
 
-```c
-nohup zookeeper-server-start /usr/local/etc/kafka/zookeeper.properties &
+```bash
+zkServer.sh start
 ```
 
+4、启动kafka
+
+```bash
+kafka-server-start -daemon /usr/local/etc/kafka/server.properties
+```
+
+5、常见命令
+
+```bash
+-- 列出所有topic
+kafka-topics --zookeeper localhost:2181/kafka --list
+```
+
+```bash
+-- 创建topic
+kafka-topics --zookeeper localhost:2181/kafka --create --replication-factor 1 --partitions 3 --topic test
+
+--topic 定义topic名字
+--replication-factor 定义副本数
+--partitions 分区数
+```
+
+```bash
+-- 删除topic
+kafka-topics --zookeeper localhost:2181/kafka --delete --topic test
+```
+
+```bash
+-- 详情
+kafka-topics --zookeeper localhost:2181/kafka --describe --topic test
+```
+
+```bash
+-- 生产者
+kafka-console-producer --topic test --broker-list localhost:9092
+```
+
+```bash
+-- 消费者
+kafka-console-consumer --topic test --bootstrap-server localhost:9092 --from-beginning
+
+--from-beginning 从开头进行消费
+```
+
+# 2 高级
+
+## 2.1 工作流程
+
+kafka中的消息以topic进行分类，生产者生产消息，消费者消费消息，都是面向topic的。
+
+**topic**是**逻辑**上的概念，而**partition**是**物理**上的概念，每个partition对应一个log文件，该log文件存储的就是producer生产的数据。producer生产的数据会被不断追加到log文件，且每条数据有自己的offset。消费组中的每个消费者都会实时记录自己消费到了哪个offset。
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/75698a26aee845eaa0adcec32d0fc045.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
+
+由于生产者生产的消息会不断追加到log文件末尾，为了防止log文件过大导致数据定位效率低下，kafka采取了**分片**和**索引**机制，将每个partition分为多个segment。每个segement对应两个文件：**.index文件和.log文件**。
+
+这些文件位于一个文件夹下，该文件夹的命名规则为：topic名称+分区序号
+
+> 例如：test1这个topic有三个分区，其对应的文件夹为test1-0,test1-1,test1-2
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/47a83bf3ac7848f5bcf06a0f83e18141.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
+
+index和log文件以当前segment的第一条消息的offset命名
+
+通过二分查找法找到index，根据index找到消息数据，根据消息内容区log中定位数据位置
+
+## 2.2 生产者
+
+### 2.2.1 分区策略
+
+**1、分区的原因**
+
+- 方便在集群中扩展，每个partition可以通过调整以适应它所在的机器，而一个topic可以有多个partition组成，因此整个集群就可以适应任意大小的数据了；
+- 可以提高并发，可以以partition为单位读写
+
+**2、分区的原则**
+
+将producer发送的数据封装成一个**producerRecord**对象
+
+- 指明partition的情况下，直接将指明的值作为partition值
+- 没有指明partition但是有key的情况下，将key的hash值与topic的partition数进行取余得到partition值
+- 都没有的情况下，第一次调用时随机生成一个整数（后面每次调用在这个整数上自增），将这个值与topic可用的partition总数取余得到partition值，**round-robin算法**
+
+### 2.2.2 数据可靠性保证
+
+为了保证producer发送的数据，能可靠的发送到指定的topic，topic的每个partition收到数据后都需要向producer发送ack，如果producer收到ack，就会进行下一轮发送，否则重新发送数据。
+
+> 问题：
+>
+> - 何时发送ack？
+>   - 确保有follower与leader同步完成，leader再发送ack，这样才能保证leader挂掉之后能在follower中选举出新的leader
+> - 多少个follower同步完成后发送ack？
+>   - 方案一：半数以上
+>   - 方案二：全部
+
+**1、副本数据同步策略**
+
+| 方案                      | 优点                                               | 缺点                                                |
+| ------------------------- | -------------------------------------------------- | --------------------------------------------------- |
+| 半数以上完成同步就发送ack | 延迟低                                             | 选举新的leader时，容忍n台节点的故障，需要2n+1个副本 |
+| 全部完成同步发送ack       | 选举新的leader时，容忍n台节点的故障，需要n+1个副本 | 延迟高                                              |
+
+Kafka选择第二种方案，原因如下：
+
+- 同样为了容忍n台节点故障，第一种方案需要2n+1个副本，第二个方案只需要n+1个副本，kafka的每个分区都有大量数据，第一种方案会造成大量数据冗余
+- 网络延迟对kafka的影响较小
 
 
 
+**2、ISR**
 
+> 问题：如果副本挂了或者一直没有同步成功，就不会发送ack
+>
+> 解决：ISR（同步副本）
 
+```bash
+/usr/local/Cellar/kafka/2.8.0> kafka-topics --zookeeper localhost:2181/kafka --describe --topic test1
 
+Topic: test1	TopicId: 5s6UOUhjRPGrOlWi-eQqRA	PartitionCount: 3	ReplicationFactor: 1	Configs:
+	Topic: test1	Partition: 0	Leader: 0	Replicas: 0	Isr: 0
+	Topic: test1	Partition: 1	Leader: 0	Replicas: 0	Isr: 0
+	Topic: test1	Partition: 2	Leader: 0	Replicas: 0	Isr: 0
+```
 
+Leader维护了一个动态的ISR，意为**和leader保持同步的follower集合**。
 
+当ISR中的follower完成数据同步之后，leader就会给follower发送ack。如果follower长时间没有向leader同步数据，该follower就会被踢出ISR，该时间阈值由`replica.lag.time.max.ms`参数设定。
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+**Leader发生故障之后，就会从ISR中选举新的leader**
 
 
 
