@@ -23,7 +23,7 @@ string、hash、list、set、sortedSet、Bitmap、HyperLogLog、GEO
 
 获取字符串长度：`strlen k1`
 
-分布式锁：`setnx k1 v1`、`set key value [EX seconds][PX milliseconds] [NX|XX]`、`setex key seconds value`
+`setnx k1 v1`、`set key value [EX seconds][PX milliseconds] [NX|XX]`、`setex key seconds value`
 
 - EX：key在多少秒后过期
 - PX：key在多少毫秒后过期
@@ -34,6 +34,8 @@ string、hash、list、set、sortedSet、Bitmap、HyperLogLog、GEO
 **2、应用场景**
 
 - 商品编号、订单号采用incr命令生成
+
+
 
 > hash应用场景
 
@@ -195,29 +197,20 @@ string、hash、list、set、sortedSet、Bitmap、HyperLogLog、GEO
 - 大数据量下高性能
 - 灵活的数据模型
 - 高可用
+- **不支持ACID**
 
 **4、常见Nosql数据库：**
 
 - Redis
+  - 数据在内存，支持持久化
+  - 支持多种数据结构的存储
 - memcache
-- HBase
+  - 数据在内存，不支持持久化
 - MongoDB
+  - 文档型数据库
+  - 对value（尤其是json）提供丰富的查询功能
 
-#### 解决方案（电商场景）
-
-1、商品的基本信息：名称、价格、厂商（MySQL）
-
-2、商品附加信息：描述、详情、评论（MongoDB）
-
-3、图片信息：分布式文件系统
-
-4、搜索关键字
-
-**5、热点信息：高频率、波段性（Redis）**
-
-<img src="https://img-blog.csdnimg.cn/20210417151717501.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:60%;" />
-
-### 简介
+### Redis简介
 
 概念：用C语言开发的一个开源的高性能**键值对数据库**
 
@@ -232,37 +225,43 @@ string、hash、list、set、sortedSet、Bitmap、HyperLogLog、GEO
   - 散列类型 hash
   - 集合类型 set
   - 有序集合类型 zset
+- 数据类型都支持丰富操作，且是**原子性**的
 - 持久化支持，可以进行数据灾难恢复
+- 实现主从同步操作
 
-### 应用
+### Redis应用
 
-1、为热点数据加速查询，如热点商品、热点新闻等
+![在这里插入图片描述](https://img-blog.csdnimg.cn/084e21ceb94244d787ff17b4f2a8c438.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
 
-2、**任务队列**，如秒杀、抢购等
+### Redis安装
 
-3、**即使信息查询**，如排行榜、访问统计等
+```bash
+redis-benchmark：性能测试工具
+redis-check-aof ：修复有问题的AOF文件
+redis-check-rdb：修复有问题的RDB文件
+redis-sentinel：Redis集群使用
 
-4、**时效信息控制**，如验证码
-
-5、消息队列
-
-6、分布式锁
-
-### 基本操作
-
-**1、添加信息**
-
-- 功能：设置key，value
-
-```sql
-set name zhang
+redis-server：Redis服务器启动命令
+redis-cli：客户端，操作入口
 ```
 
-**2、查询信息**
+启动：
 
-```sql
-get name
+```bash
+redis-server
 ```
+
+### Redis相关知识
+
+1、端口：6379
+
+2、默认16个数据库，select 0/1/2
+
+3、Redis是 **单线程+多路IO复用技术**
+
+- **多路复用**：使用一个线程检查多个文件描述符（socket）的就绪状态，比如调用select和poll函数，传入多个文件描述符，如果有一个文件描述符就绪，则返回，否则阻塞直到超时。得到就绪状态后进行真正的操作可以在同一个线程里执行，也可以启用线程执行
+
+ 
 
 ## 😊 数据类型
 
@@ -286,13 +285,29 @@ redis是一个Map，其中所有的数据都是采用key-value的形式存储
 
 - **数据类型指的是存储的数据类型，也就是value部分的类型，key永远是字符串**
 
+### 对key的操作
+
+```mysql
+key * ：查看当前库所有的key
+exists key ：判断某个key是否存在
+type key ：查看key的类型 
+
+del key ：删除key的数据
+unlink key ：根据value选择非阻塞删除，仅将keys从元数据中删除，真正的删除在后续异步完成
+
+expire key 10 ：为给定key设置过期时间（单位：秒），不设置时间表示永远不过期
+ttl key：查看剩余时间,-2表示过期，-1表示永不过期
+
+dbsize：查看当前数据库key的数量
+```
+
 ### string
 
 **1、存储的数据：单个数据，最简单的数据存储类型，最常用**
 
 **2、存储数据的格式：一个存储空间保存一个数据**
 
-3、存储内容：通常使用字符串，如果以整数形式展示，也可以作为数字操作
+3、存储内容：通常使用字符串，如果以整数形式展示，也可以作为数字操作，value最大512M
 
 4、基本操作
 
@@ -367,61 +382,243 @@ Sting作为数值操作
 
 redis控制数据的生命周期，通过数据是否失效控制业务行为，适用于所有具有时效性限定控制的操作
 
-**6、注意事项**
+**6、数据结构**
 
-数据操作不成功的反馈与正常操作之间的差异
+String的数据结构为简单动态字符串（SDS），是可以修改的字符串，内部结构实现类似于java的arraylist，采用预分配冗余空间的方式来减少内存的频繁分配。
 
-- (integer) 0：失败
-- (integer) 1：成功
+![在这里插入图片描述](https://img-blog.csdnimg.cn/77dffea9b4bd42509d140cead0bc18a8.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
 
-数据未获取到
+内部为当前字符串实际分配的空间capacity，一般高于实际字符串长度len，当字符串长度小于1M时，扩容都是2倍，如果超过1M，扩容一次只多扩容1M空间。（最长512M）
 
-- (nil)等同于null
+### List：单键多值
 
-数据最大存储量
+1、简介
 
-- 512MB
+- Redis列表是简单的字符串列表，按照**插入顺序排序**
+- 可以添加一个元素到列表的头部或者尾部
+- 底层实际上是个**双向列表**，对两端操作性能很高
 
-数值计算最大范围（java的long最大值）
+**2、基本操作**
 
-**7、业务场景**
-
-> 主页高频访问信息显示控制，例如微博大V的粉丝数量和微博数量
-
-**解决方案**
-
-- 在redis中为大V用户设定用户信息，以用户主键和属性值作为key，后台设定定时刷新策略
+- 添加数据/修改数据
 
   ```sql
-  eg: user:id:0001:fans 10
+  lpush key value1 [value2]...
+  rpush key value1 [value2]...
   ```
 
-- 使用json形式存储
+- 获取数据
 
   ```sql
-  eq: user:id:0001 {fans:10}
+  lrange key start stop    (lrange list1 0 -1)   
+  lindex key index
+  llen key
   ```
 
-**key的设置约定**
+- 获取并移除数据
 
-表名：主键名：主键值：属性
+  ```sql
+  lpop key
+  rpop key
+  ```
 
-### hash
+**3、扩展操作**
 
-1、新的存储需求：对一些列存储的数据进行编组，典型应用存储对象信息
+- 规定时间内获取并移除数据，阻塞式数据获取
 
-2、需要的存储结构：一个存储空间保存多个键值对数据
+  ```sql
+  blpop key1 [key2] timeout
+  brpop key1 [key2] timeout
+  ```
 
-3、hash类型：底层使用哈希表结构实现数据存储
+> 业务场景：微信朋友圈点赞，要求按照点赞顺序显示点赞好友信息
+
+<img src="https://img-blog.csdnimg.cn/20210417170350860.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
+
+**从中间取消元素，移除指定元素**
+
+```sql
+lrem key count value
+
+例子：
+lrem list01 1 d
+```
+
+**4、注意事项**
+
+- list中保存的数据是string类型
+- 具有索引概念，但是操作数据通常以队列形式进行入队出队，或者栈的形式
+- list可以对数据进行分页操作，通常第一页信息来自list，第2页及更多信息通过数据库形式加载
+
+**5、数据结构**
+
+List的数据结构为**快速链表**（quickList）
+
+- 列表元素较少的情况下会使用一块连续的内存存储，这个结构是**zipList**，它将所有的元素紧挨着一起存储，分配的是一块连续的内存
+
+- 数据量较多的情况下会使用**quickList**
+
+  - 因为普通链表需要的附加指针空间太大，会比较浪费空间
+
+  - Redis将链表和zipList结合起来组成quickList，将多个ziplist使用双向指针串起来使用
+
+  ![在这里插入图片描述](https://img-blog.csdnimg.cn/5eff04b5fdee4157af248456e0b2e81d.png)
+
+
+
+### Set
+
+> 对外提供功能与list类似的一个列表的功能，特殊之处在于set可以**自动排重**，当需要一个列表数据但不希望出现重复时，set是一个很好的选择，并且set提供了判断某个成员是否在集合内的接口
+>
+> Redis的set时string类型的无序集合，底层是value为null的**hash表**，复杂度为O（1 ）
+
+<img src="https://img-blog.csdnimg.cn/20210417171747798.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
+
+**1、基本操作**
+
+- 添加数据
+
+  ```sql
+  sadd key m1 m2...
+  ```
+
+- 获取全部数据
+
+  ```sql
+  smembers key
+  ```
+
+- 删除数据
+
+  ```sql
+  srem key m1 m2
+  ```
+
+- 获取集合数据总量
+
+  ```sql
+  scard key
+  ```
+
+- 判断集合中是否包含指定数据
+
+  ```sql
+  sismember key member
+  ```
+
+**2、扩展操作**
+
+> 每位用户首次使用今日头条会设置3个爱好的内容，后期为了增加用户的活跃度，需要让用户对其他信息类别逐渐产生兴趣，如何实现？
+
+业务分析
+
+- 系统分析出各个分类的最新或最热点信息条目并组织成set集合
+- 随机挑选其中部分信息
+- 配合用户关注信息分类中的热点信息组织成展示的全信息集合
+
+解决方案
+
+- 随机获取集合中指定数量的数据
+
+  ```sql
+  srandmember key count
+  ```
+
+- **随机获取**集合中某个数据并将数据移出集合
+
+  ```sql
+  spop key
+  ```
+
+**随机推荐类信息检索，如热点歌单推荐**
+
+> qq好友推荐（共同好友）、微博推荐
+
+解决方案
+
+- 求两个集合的**交、并、差**
+
+  ```sql
+  sinter key1 key2
+  sunion key1 key2
+  sdiff key1 key2
+  ```
+
+- 求两个集合的交、并、差并存储到指定集合
+
+  ```mysql
+  sinterstore targetkey key1 key2
+  sunionstore targetkey key1 key2
+  sdiffstore targetkey key1 key2
+  ```
+
+- 将指定数据从原始集合移动到目标集合
+
+  ```sql
+  smove source targetkey member
+  ```
+
+**redis应用于同类信息的关联搜索，二度关联搜索、深度关联搜索**
+
+**显示共同好友、共同关注**
+
+3、注意事项
+
+- set类型不允许数据重复
+- set虽然和hash存储结构相同，无法启用hash中的存储值的空间
+
+4、应用场景
+
+> 集团有1000名员工，内部系统有700多个角色，3000多个业务操作，23000多种数据每位员工具有一个或多个角色，如何进行权限校验？
+
+解决方案：
+
+- 根据用户id获取用户所有角色
+- 根据用户所有角色获取用户所有操作权限放入set集合（合并并存储）
+- 根据用户所有角色获取用户所有数据全选放入set集合
+
+> 统计网站的PV（访问量）、UV（独立访客）、IP（独立IP）
+>
+> PV：被访问的次数
+>
+> UV：不同用户访问次数
+>
+> IP：不同IP地址访问次数
+
+解决方案：
+
+- 建立string类型数据，利用incr统计日访问量（PV）
+- 建立set模型，记录不同cookie数量（UV）
+- 建立set模型，记录不同ip数量（IP）
+
+> 黑白名单
+
+解决方案：
+
+- 周期性更新用户黑名单，加入set集合
+- 用户行为信息到达后和黑名单进行比对，确认行为去向
+- 黑名单过滤IP地址：应用于开放游客访问权限的信息源
+- 黑名单过滤设备信息：应用于限定访问设备的信息源
+- 黑名单过滤用户：应用于基于访问权限的信息源
+
+**5、数据结构**
+
+set的数据结构是dict字典，字典是用哈希表实现的
+
+Java中的HashSet的内部实现使用HashMap，Redis的set结构也是一样的，内部使用hash结构，所有的value指向同一个内部值
+
+
+
+### Hash
+
+1、简介
+
+- 键值对集合
+- 是一个string类型的field和value的映射表，hash特别适合存储对象
 
 <img src="https://img-blog.csdnimg.cn/20210417161600331.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
 
-**hash存储优化：**
-
-- 如果field数量较少，存储结构优化为类数组结构
-- 如果field数量较多，存储结构使用hashmap结构
-
-4、基本操作
+2、基本操作
 
 - 添加/修改数据：`hset key field value`
 
@@ -433,11 +630,14 @@ redis控制数据的生命周期，通过数据是否失效控制业务行为，
   ```
 
 - 添加/修改多个数据：`hmset key field1 value1 field2 value2`
+
 - 获取多个数据：`hmget key field1 field2`
+
 - 获取哈希表中字段的数量：`hlen key`
+
 - 获取哈希表中是否存在指定字段：`hexists key field`
 
-**5、扩展操作**
+**3、扩展操作**
 
 - 获取哈希表所有的字段名或字段值
 
@@ -453,14 +653,13 @@ redis控制数据的生命周期，通过数据是否失效控制业务行为，
   hincrbyfloat key field increment
   ```
 
-**6、注意事项**
+**4、注意事项**
 
 - hash类型的value只能存储字符串
 - 每个hash可以存储2^32-1个
-- hash类型十分贴近对象的数据存储形式，并且可以灵活添加删除对象属性，但是不可以滥用
 - hgetall操作可以获取全部属性，如果field过多，遍历效率会很低，有可能成为数据访问瓶颈
 
-**7、应用场景**
+**4、应用场景**
 
 > 购物车设计和实现
 
@@ -520,228 +719,16 @@ hsetnx key field value
 - 数量为value
 - 使用降值的方式控制
 
+**5、数据结构**
 
+Hash对应的数据结构有两种：ziplist、hashtable
 
-> String存对象（json）、Hash存对象
+- field-value长度较短且个数较少，使用ziplist
+- field-value长度较长且个数较多，使用hashtable
 
-String读为主，Hash更新为主
 
 
-
-### list
-
-1、数据存储需求：存储多个数据，并对数据进入存储空间的顺序进行区分
-
-2、需要的存储结构：一个存储空间保存多个数据，且通过数据可以体现进入顺序
-
-3、list类型：**保存多个数据，底层使用双向链表实现**
-
-**4、基本操作**
-
-- 添加数据/修改数据
-
-  ```sql
-  lpush key value1 [value2]...
-  rpush key value1 [value2]...
-  ```
-
-- 获取数据
-
-  ```sql
-  lrange key start stop    (lrange list1 0 -1)   
-  lindex key index
-  llen key
-  ```
-
-- 获取并移除数据
-
-  ```sql
-  lpop key
-  rpop key
-  ```
-
-**5、扩展操作**
-
-- 规定时间内获取并移除数据，阻塞式数据获取
-
-  ```sql
-  blpop key1 [key2] timeout
-  brpop key1 [key2] timeout
-  ```
-
-> 业务场景：微信朋友圈点赞，要求按照点赞顺序显示点赞好友信息
-
-<img src="https://img-blog.csdnimg.cn/20210417170350860.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
-
-**从中间取消元素，移除指定元素**
-
-```sql
-lrem key count value
-
-例子：
-lrem list01 1 d
-```
-
-**6、注意事项**
-
-- list中保存的数据是string类型
-- 具有索引概念，但是操作数据通常以队列形式进行入队出队，或者栈的形式
-- list可以对数据进行分页操作，通常第一页信息来自list，第2页及更多信息通过数据库形式加载
-
-**7、业务场景**
-
-> 个人用户的关注列表需要按照用户的关注顺序进行展示，粉丝列表需要降最近关注的粉丝列在前面
->
-> 新闻网站将新闻按照发生时间顺序展示
->
-> 保障多台服务器操作日志的统一顺序输出
-
-解决方案：
-
-- 依赖list的数据具有顺序的特征对信息进行管理
-- **使用队列模型解决多路信息汇总合并的问题**
-- **使用栈模型解决最新消息的问题**
-
-### set
-
-> 新的存储需求：存储大量数据，在查询方面提供更高的效率
->
-> 需要新的存储结构：能够保存大量的数据，高效的内部存储机制，便于查询
->
-> set类型：与hash存储结构完全相同，仅存储键，不存储值，且值不允许重复
-
-<img src="https://img-blog.csdnimg.cn/20210417171747798.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
-
-**1、基本操作**
-
-- 添加数据
-
-  ```sql
-  sadd key m1 m2...
-  ```
-
-- 获取全部数据
-
-  ```sql
-  smembers key
-  ```
-
-- 删除数据
-
-  ```sql
-  srem key m1 m2
-  ```
-
-- 获取集合数据总量
-
-  ```sql
-  scard key
-  ```
-
-- 判断集合中是否包含指定数据
-
-  ```sql
-  sismember key member
-  ```
-
-**2、扩展操作**
-
-> 每位用户首次使用今日头条会设置3个爱好的内容，后期为了增加用户的活跃度，需要让用户对其他信息类别逐渐产生兴趣，如何实现？
-
-业务分析
-
-- 系统分析出各个分类的最新或最热点信息条目并组织成set集合
-- 随机挑选其中部分信息
-- 配合用户关注信息分类中的热点信息组织成展示的全信息集合
-
-解决方案
-
-- 随机获取集合中指定数量的数据
-
-  ```sql
-  srandmember key count
-  ```
-
-- 随机获取集合中某个数据并将数据移出集合
-
-  ```sql
-  spop key
-  ```
-
-**随机推荐类信息检索，如热点歌单推荐**
-
-> qq好友推荐（共同好友）、微博推荐
-
-解决方案
-
-- 求两个集合的交、并、差
-
-  ```sql
-  sinter key1 key2
-  sunion key1 key2
-  sdiff key1 key2
-  ```
-
-- 求两个集合的交、并、差并存储到指定集合
-
-  ```sql
-  sinterstore targetkey key1 key2
-  sunionstore targetkey key1 key2
-  sdiffstore targetkey key1 key2
-  ```
-
-- 将指定数据从原始集合移动到目标集合
-
-  ```sql
-  smove source targetkey member
-  ```
-
-**redis应用于同类信息的关联搜索，二度关联搜索、深度关联搜索**
-
-**显示共同好友、共同关注**
-
-3、注意事项
-
-- set类型不允许数据重复
-- set虽然和hash存储结构相同，无法启用hash中的存储值的空间
-
-4、应用场景
-
-> 集团有1000名员工，内部系统有700多个角色，3000多个业务操作，23000多种数据每位员工具有一个或多个角色，如何进行权限校验？
-
-解决方案：
-
-- 根据用户id获取用户所有角色
-- 根据用户所有角色获取用户所有操作权限放入set集合（合并并存储）
-- 根据用户所有角色获取用户所有数据全选放入set集合
-
-> 统计网站的PV（访问量）、UV（独立访客）、IP（独立IP）
->
-> PV：被访问的次数
->
-> UV：不同用户访问次数
->
-> IP：不同IP地址访问次数
-
-解决方案：
-
-- 建立string类型数据，利用incr统计日访问量（PV）
-- 建立set模型，记录不同cookie数量（UV）
-- 建立set模型，记录不同ip数量（IP）
-
-> 黑白名单
-
-解决方案：
-
-- 周期性更新用户黑名单，加入set集合
-- 用户行为信息到达后和黑名单进行比对，确认行为去向
-- 黑名单过滤IP地址：应用于开放游客访问权限的信息源
-- 黑名单过滤设备信息：应用于限定访问设备的信息源
-- 黑名单过滤用户：应用于基于访问权限的信息源
-
-
-
-### zset
+### Zset有序集合
 
 > 新的存储需求：数据排序有利于数据有效展示，需要提供一种可以根据自身特征进行排序的方式
 >
@@ -752,10 +739,6 @@ lrem list01 1 d
 
 
 <img src="https://img-blog.csdnimg.cn/20210417175132505.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
-
-
-
-
 
 **1、基本操作**
 
@@ -859,6 +842,197 @@ lrem list01 1 d
 **多条件任务权重**
 
 - 如果权限过多，需要对排序score值进行处理
+
+**5、数据结构**
+
+zset是Redis提供的一个非常特别的数据结构，一方面等价于java的Map<String,Double>，可以给每个元素value赋予一个权重score，另一方面又类似于TreeSet，内部的元素会按照score进行排序，得到每个元素的名次，还可以根据score的范围获取元素的列表
+
+底层使用了两个数据结构：
+
+- **hash**，hash的作用是关联value和score，保障元素value的唯一性，可以通过元素value找到对应的score
+- **跳表**，目的是给value排序，根据score的范围获取元素列表
+
+
+
+
+
+### Redis配置文件
+
+```conf
+################################## NETWORK #####################################
+
+# 表示只能本地访问
+bind 127.0.0.1 ::1
+
+# 表示开启保护模式
+protected-mode yes
+
+port 6379
+
+# 设置tcp的backlog，backlog是一个连接队列，队列总和=未完成三次握手队列+已经完成三次握手队列
+tcp-backlog 511
+
+# 超时时间 0表示永不超时
+timeout 0
+
+# 表示检查心跳的时间
+tcp-keepalive 300
+
+################################# TLS/SSL #####################################
+
+
+################################# GENERAL #####################################
+# redis后台启动
+daemonize no
+
+# 保存进程号
+pidfile /var/run/redis_6379.pid
+
+# 日志级别：
+# debug (a lot of information, useful for development/testing)
+# verbose (many rarely useful info, but not a mess like the debug level)
+# notice (moderately verbose, what you want in production probably)
+# warning (only very important / critical messages are logged)
+loglevel notice
+
+# 日志输出文件路径
+logfile ""
+
+# 数据库个数
+databases 16
+
+always-show-logo no
+
+set-proc-title yes
+
+################################ SNAPSHOTTING  ################################
+stop-writes-on-bgsave-error yes
+
+rdbcompression yes
+
+rdbchecksum yes
+
+dbfilename dump.rdb
+
+dir /usr/local/var/db/redis/
+
+################################# REPLICATION #################################
+
+replica-serve-stale-data yes
+
+replica-read-only yes
+
+repl-diskless-sync no
+
+repl-diskless-sync-delay 5
+
+############################### KEYS TRACKING #################################
+
+
+################################## SECURITY ###################################
+
+
+################################### CLIENTS ####################################
+
+
+############################## MEMORY MANAGEMENT ################################
+
+
+############################# LAZY FREEING ####################################
+
+lazyfree-lazy-eviction no
+lazyfree-lazy-expire no
+lazyfree-lazy-server-del no
+replica-lazy-flush no
+
+
+lazyfree-lazy-user-del no
+
+lazyfree-lazy-user-flush no
+
+################################ THREADED I/O #################################
+
+############################ KERNEL OOM CONTROL ##############################
+oom-score-adj no
+oom-score-adj-values 0 200 800
+
+
+#################### KERNEL transparent hugepage CONTROL ######################
+
+disable-thp yes
+
+############################## APPEND ONLY MODE ###############################
+appendonly no
+
+no-appendfsync-on-rewrite no
+
+auto-aof-rewrite-percentage 100
+auto-aof-rewrite-min-size 64mb
+
+aof-load-truncated yes
+
+aof-use-rdb-preamble yes
+
+################################ LUA SCRIPTING  ###############################
+
+lua-time-limit 5000
+
+################################ REDIS CLUSTER  ###############################
+
+
+########################## CLUSTER DOCKER/NAT support  ########################
+
+
+################################## SLOW LOG ###################################
+
+slowlog-max-len 128
+
+################################ LATENCY MONITOR ##############################
+
+
+############################### GOPHER SERVER #################################
+
+
+############################### ADVANCED CONFIG ###############################
+
+```
+
+### 发布和订阅
+
+1、Reds发布订阅是一种消息通信模式
+
+2、Redis客户端可以订阅任意数量的频道
+
+3、命令行实现
+
+- 打开一个客户端订阅channel1
+
+  ```sql
+  subscribe channel1
+  ```
+
+- 打开另外一个客户端，给channel1发布消息
+
+  ```sql
+  publish channel1 hello
+  ```
+
+  
+
+### Bitmaps
+
+1、简介
+
+- 本身不是一种数据类型，实际上是字符串，但是可以对字符串的位进行操作
+- 单独提供一套命令，在redis中使用bitmaps和 使用字符串的方法不同。可以把bitmaps想象成一个以位为单位的数组，数组的每个单元存储0和1
+
+  
+
+### HyperLogLog
+
+### Geospatital
+
+
 
 ### 案例
 
@@ -1017,6 +1191,153 @@ public void testJedis(){
 
 
 
+## 😊 事务和锁
+
+ Redis事务是一个**单独的隔离操作**，事务中的所有命令都会序列化、按顺序执行。事务在执行的过程中，不会被其他客户端发送的命令请求打断
+
+Redis事务的主要作用是**串联多个命令**防止别的命令插队
+
+### Multi、Exec、discard
+
+从输入multi命令开始，输入的命令都会依次进入命令队列中，但不会执行，直到输入exec奇偶，redis将之前的命令依次执行。
+
+组队过程中可以使用discard放弃组队
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/0343f819374b40799612483619dcf49a.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
+
+1. **如果组队中命令出现错误，那么所有的命令都不会执行**；
+2. **如果执行出现运行错误，那么正确的命令会被执行，只有错误的命令不执行**。
+
+### 事务冲突
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/4879b58d97404d9781cfad06ca5d850f.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
+
+#### 悲观锁
+
+每次拿数据的时候认为别人会修改，所以每次在拿数据的时候会加上锁，这样别人想去拿数据就会阻塞。
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/16d8ef1f15d94f808b824de927a27dad.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
+
+#### 乐观锁
+
+使用版本号机制
+
+适用于多读的应用类型，这样可以提高吞吐量，redis就是使用这种check-and-set机制实现事务的
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/8c46bbf3590449c2aa1497b01a3a1fac.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
+
+#### watch key
+
+在执行multi之前，先执行watch key1 [key2]，可以监视一个或多个key。
+
+**如果在事务执行之前这些key被其他命令改动，那么事务被打断，监控一直持续到EXEC命令**
+
+#### 事务三特性
+
+1、单独的隔离操作
+
+- 事务的所有命令都会序列化、按顺序的执行。事务在执行过程中不会被其他客户端发送的命令请求打断
+
+2、没有隔离级别的概念
+
+- 队列的命令在提交之前都不会执行
+
+3、不保证原子性
+
+- 事务中如果有一条命令执行失败，后面的命令仍然会执行，不回滚
+
+### 秒杀案例
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/e04b93e8a4b84ae0b156516c698b6357.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
+
+>  set集合判断用户是否重复秒杀操作：`sismember`
+>
+> 库存-1：`decr`
+
+问题：
+
+- 连接超时问题：使用连接池解决
+- **超卖问题**
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/3f08040453ee433fa6fd3ddcd19c0cc6.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
+
+解决方案：
+
+- **乐观锁**
+
+  ![在这里插入图片描述](https://img-blog.csdnimg.cn/60d1b46a79e7450f855706ad747adb13.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
+
+```java
+//watch
+jedis.watch(kcKey);
+//获取库存，如果库存为null，秒杀开没有开始
+
+//如果商品数量小于1，秒杀结束
+
+//开始秒杀
+//使用事务
+Transaction multi = jedis.multi();
+//组队操作
+multi.decr(kcKey);
+multi.sadd(userKey,uid);
+//执行
+List<Object> results = multi.exec();
+if(results==null || results.size()==0){
+  jedis.close(); 
+}
+```
+
+**库存遗留问题**
+
+- 乐观锁造成库存遗留问题
+- 解决：
+  - LUA脚本
+    - 将复杂的或者多步的redis操作，写为一个脚本，一次提交给redis执行，减少反复连接redis的次数
+    - lua脚本类似redis的事务，有一定的原子性，不会被其他命令插队
+    - 利用lua脚本淘汰用户，解决超卖问题
+    - 通过lua解决争抢问题，实际上是**redis利用单线程的特性，用任务队列的方式解决多任务并发问题**
+
+### 分布式锁
+
+> 超卖问题，避免一件商品被多个人修改
+
+业务分析：
+
+- 使用watch监控一个key有没有改变不能解决问题，需要监控的是具体数据
+- 虽然redis是单线程的，但是**多个客户端对同一数据进行操作，如何避免不被同时修改？**
+
+解决方案
+
+- **使用setnx设置一个公共锁**：利用setnx命令返回值特征，有值就返回设置失败（无控制权），无值则返回设置成功（有控制权），操作完毕通过del操作释放锁
+
+```sql
+setnx lock-key value
+```
+
+
+
+> 业务场景
+>
+> 依赖分布式锁的机制，某个用户操作时对应客户端当即，且此时已经获取到锁，如何解决？
+
+业务分析：
+
+- 由于锁操作由用户控制加锁解锁，必定会存在加锁后不解锁的风险
+- 需要解锁操作不能仅依赖用户控制，系统级别要给出保底处理方案
+
+解决方案
+
+- 使用expire为锁key添加时间限制
+
+```sql
+expire lock-key second
+pexpire lock-key milliseconds
+```
+
+## 
+
+
+
 ## 😊 持久化
 
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/20210417214135821.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
@@ -1050,8 +1371,6 @@ public void testJedis(){
 ```sql
 save
 ```
-
-
 
 <img src="https://img-blog.csdnimg.cn/20210417214829822.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
 
@@ -1185,7 +1504,7 @@ appendfsync always|everysec|no
 
 随着命令不断写入AOF，文件会越来越大，为了解决这个问题，Redis引入了AOF重写机制压缩文件体积，AOF文件重写是将Redis进程内的数据转化为写命令同步到新AOF文件的过程。
 
-**简单的说，就是将同一个数据的若干买了执行结果转化为最终结果数据对应的指令进行记录**
+**简单的说，就是将同一个数据的若干执行结果转化为最终结果数据对应的指令进行记录**
 
 作用：
 
@@ -1198,6 +1517,7 @@ appendfsync always|everysec|no
 - 进程内已超时的数据不再写入文件
 - 忽略无效指令，重写时使用进程内数据直接生成，新的AOF只保留最终数据的写入命令
 - 对同一个数据的多条命令进行合并
+- 把rdb快照以二进制的形式附在新的aof头部
 
 方式：
 
@@ -1233,7 +1553,9 @@ aof_current_size > auto-aof-rewrite-min-size
 
 #### AOF工作流程
 
-<img src="https://img-blog.csdnimg.cn/20210418095341735.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />![在这里插入图片描述](https://img-blog.csdnimg.cn/20210418095415457.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
+<img src="https://img-blog.csdnimg.cn/20210418095341735.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
+
+
 
 
 
@@ -1277,141 +1599,7 @@ aof_current_size > auto-aof-rewrite-min-size
 
 持久化：5、6、7、12（短期）、13、16
 
-## 😊 事务
 
-### 简介
-
-Redis执行指令过程中，多条连续执行的指令被干扰，打断，插队
-
-> redis事务就是一个命令执行的队列，将一系列预定义命令包装成一个整体，当执行时一次性按照添加顺序依次执行，中间不会被打断或者打扰
-
-一个队列中，一次性、顺序性、排他性的执行一系列命令
-
-### 基本操作
-
-1、开启事务
-
-- 作用：设定事务开启位置，该指令执行后，后续的所有指令均加入事务中
-
-```sql
-multi
-```
-
-2、执行事务
-
-- 作用：设定事务的结束位置，同时执行事务，与multi成对出现，成对使用
-
-```sql
-exec
-```
-
-例子
-
-```sql
-127.0.0.1:6379> multi                                                                     
-OK
-127.0.0.1:6379> set name lisi                                                             
-QUEUED
-127.0.0.1:6379> exec                                                                      
-1) OK
-```
-
-**注意：加入事务的命令暂时进入任务队列中，没有立即执行，只有执行exec才开始执行**
-
-3、取消事务
-
-- 作用：终止当前事务，发生在multi之后，exec之前
-
-```sql
-discard
-```
-
-#### 工作流程
-
-<img src="https://img-blog.csdnimg.cn/20210418103943492.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
-
-#### 注意事项
-
-> 定义事务过程中，命令格式输入错误怎么办？
-
-- 语法错误：指令书写格式有误
-- **处理结果：如果定义的事务中所包含的命令存在语法错误，整体事务中所有命令均不会执行**
-
-> 定义事务过程中，命令执行出现错误怎么办？
-
-- 运行错误：命令格式正确，但是无法正确执行，例如list进行incr操作
-- **处理结果：能够正确运行的命令会执行，运行错误的命令不会执行**
-
-**注意：已经执行完毕的命令对应的数据不会自动回滚，需要程序员自己实现回滚**
-
-> 手动回滚
-
-- 记录操作过程中被影响的数据之前的状态
-  - 单数据：string
-  - 多数据：hash、list、set、zset
-- 设置指令恢复所有的被修改项
-
-### 锁
-
-> 业务场景
->
-> 对货物进行补货，4个业务员都有权限进行补货，补货操作可能是一系列操作，牵扯到多个连续操作，如何保障不会重复操作？
->
-> 业务分析
->
-> - 多个客户端可能同时操作同一组数据，并且该数据一旦被操作修改后，将不适用于继续操作
-> - 在操作之前锁定要操作的数据，一旦发生变化，终止当前操作
-
-**watch**
-
-对key添加监视锁，在执行exec之前如果key发生变化，终止事务
-
-```sql
-watch key1 key2...
-```
-
-取消对所有key的监视
-
-```sql
-unwatch
-```
-
-### 分布式锁
-
-> 超卖问题，避免一件商品被多个人修改
-
-业务分析：
-
-- 使用watch监控一个key有没有改变不能解决问题，需要监控的是具体数据
-- 虽然redis是单线程的，但是**多个客户端对同一数据进行操作，如何避免不被同时修改？**
-
-解决方案
-
-- **使用setnx设置一个公共锁**：利用setnx命令返回值特征，有值就返回设置失败（无控制权），无值则返回设置成功（有控制权），操作完毕通过del操作释放锁
-
-```sql
-setnx lock-key value
-```
-
-
-
-> 业务场景
->
-> 依赖分布式锁的机制，某个用户操作时对应客户端当即，且此时已经获取到锁，如何解决？
-
-业务分析：
-
-- 由于锁操作由用户控制加锁解锁，必定会存在加锁后不解锁的风险
-- 需要解锁操作不能仅依赖用户控制，系统级别要给出保底处理方案
-
-解决方案
-
-- 使用expire为锁key添加时间限制
-
-```sql
-expire lock-key second
-pexpire lock-key milliseconds
-```
 
 ## 😊 删除策略
 
@@ -1659,3 +1847,87 @@ public class LRUCache{
   }
 }
 ```
+
+## 😊 主从复制
+
+1、是什么？
+
+- 主机数据更新后根据配置和策略，自动同步到备机的master/slaver机制，master以写为主，slave以读为主
+
+<img src="https://img-blog.csdnimg.cn/de647e0d9da341d7a2e7d90aba4e7d67.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
+
+2、用处
+
+- 读写分离
+- 容灾恢复
+
+### 主从复制原理
+
+1、从服务器连接上主服务器之后，从服务器向主服务器发送进行数据同步消息
+
+2、主服务器接到从服务器发送过来的同步消息之后，把主服务器数据进行持久化，rdb文件，把rdb文件发送给从服务器，从服务器读取rdb文件
+
+3、每次主服务器进行写操作后，和从服务器进行数据同步
+
+### 哨兵模式
+
+> 能够后台监控主机是否故障，如果故障了根据投票数量自动将从库转换为主库
+
+<img src="https://img-blog.csdnimg.cn/5525ce7078a443c6a662aa90159176ab.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:33%;" />
+
+![image.png](https://p9-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/67310a227b284539810f3914ec1f3822~tplv-k3u1fbpfcp-watermark.awebp)
+
+主要功能包括：
+
+- 主节点生存检测
+- 主从操作检测
+- 自动故障转移：**当主节点无法正常工作时，Sentinel将启动自动故障转移操作。它将与发生故障的主节点处于主从关系的从节点之一升级到新的主节点，并将其他从节点指向新的主节点；**
+- 主从切换
+
+#### 缺点：复制延时
+
+由于所有的写操作都是先在master上操作，然后同步更新到slave上，所以从master同步到slave机器有一定的延迟，当系统很繁忙的时候，延迟问题会更加严重，slave机器数量的增加也会使这个问题更加严重
+
+#### 故障恢复
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/946cd9c3b9c1478aa55e5b0cfe359530.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
+
+优先级在redis.conf中默认，slave-priority 100，值越小优先级越高
+
+偏移量是指获得主机数据最全的
+
+每个redis实例启动后都会随机产生runid
+
+## 😊 Redis集群
+
+> 问题：
+>
+> - 容量不够，redis如何进行扩容？
+> - 并发写操作，redis如何分摊？
+>
+> 方法：无中心化集群
+
+**1、什么是集群？**
+
+- Redis集群实现了对Redis的水平扩容，即启动N个redis节点，将整个数据库分布存储在这N个节点中，每个节点存储总数据的1/N
+
+2、
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
