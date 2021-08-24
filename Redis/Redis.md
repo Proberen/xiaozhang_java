@@ -1911,11 +1911,87 @@ public class LRUCache{
 
 - Redis集群实现了对Redis的水平扩容，即启动N个redis节点，将整个数据库分布存储在这N个节点中，每个节点存储总数据的1/N
 
-2、
 
 
+## 😊 应用问题
 
+### 缓存穿透
 
+![在这里插入图片描述](https://img-blog.csdnimg.cn/d2193c72722a4411b4e39cbcbcdb4dd9.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
+
+**1、背景**
+
+- 应用服务器压力变大了
+- redis命中率降低，一直查询数据库
+
+**2、现象**
+
+- redis查询不到数据
+- 出现大量非正常url访问
+
+3、解决方案
+
+- **对空值缓存 **：如果一个查询返回的数据为空，把这个结果进行缓存
+- **设置可访问的白名单**：使用bitmaps定义一个可访问的名单，名单id作为bitmaps的偏移量，每次访问和bitmap里面的id做比较
+- **采用布隆过滤器**
+
+### 缓存击穿
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/d493f2a1b9ce446f93571be04667c5db.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
+
+**1、现象**
+
+- 数据库访问压力瞬间增加
+- redis没有出现大量key过期
+- redis正常运行
+
+**2、原因**
+
+- redis的某个key过期，大量访问使用这个key
+
+**3、解决方案**
+
+- 预先设置热门数据
+- 事时调整：监控热门数据，实时调整key的过期时长
+- 使用锁：
+  - 缓存失效的时候，不是立即去load db
+  - 先使用缓存工具的某些成功操作返回值的操作（redis的setnx）去set一个mutex key
+  - 操作返回成功时，再进行load db的操作，并回设缓存，删除mutex key
+  - 操作返回失败，说明有线程在load db，当前线程睡眠一段时间重试
+
+### 缓存雪崩
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/2a01fe182c544e6f9558186e364e94b0.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
+
+**1、现象**
+
+- 数据库压力变大，服务器崩溃
+- 大量key集中过期
+
+2、解决方案
+
+- **构建多级缓存架构**：ngnix缓存+redis缓存+其他缓存
+- **使用锁**：保证不会有大量线程对数据库一次性进行读写，从而避免失效时出现大量并发请求
+- **设置过期标志更新缓存**：记录缓存数据是否过期，如果过期会触发通知另外的线程在后台更新实际key的缓存
+- **分散过期时间**
+
+### 分布式锁
+
+1、使用setnx上锁，使用del释放锁
+
+2、锁一直没有释放，设置key的过期时间，自动释放
+
+```sql
+setnx user 1
+expire 10
+```
+
+3、上锁之后突然出现异常，无法设置过期时间
+
+```sql
+上锁，设置过期时间
+set 10 nx ex 10
+```
 
 
 

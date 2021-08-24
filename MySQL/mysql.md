@@ -50,6 +50,8 @@
 读取磁盘的次数过多，读取浪费太多
 
 > B+树的阶
+>
+> https://juejin.cn/post/6973647815473889311
 
 16K / 字段大小
 
@@ -58,6 +60,104 @@ int：4byte
 bigint：8byte
 
 指针：6B
+
+### 日志
+
+#### **redo Log**（重做日志）
+
+1、当有一条记录需要更新的时候，InnoDB 引擎就会先把记录写到 redo log里面，并更新内存，这个时候更新就算完成了
+
+2、InnoDB 引擎会在适当的时候，将这个操作记录更新到磁盘里面，而这个更新往往是在系统比较空闲的时候做
+
+3、InnoDB 的 redo log 是固定大小的，比如可以配置为一组 4 个文件，每个文件的大小是 1GB，那么这块“粉板”总共就可以记录 4GB 的操作。从头开始写，写到末尾就又回到开头循环写，如下面这个图所示
+
+<img src="https://img-blog.csdnimg.cn/d801ef0897424b2eac1162e52e358848.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
+
+> redo log 是**循环写的，空间固定会用完**；binlog 是可以追加写入的。“追加写”是指 binlog 文件写到一定大小后会切换到下一个，并不会覆盖以前的日志。
+>
+> **write pos** 是当前记录的位置，一边写一边后移，写到第 3 号文件末尾后就回到 0 号文件开头。**checkpoint** 是当前要擦除的位置，也是往后推移并且循环的，擦除记录前要把记录更新到数据文件。write pos 和 checkpoint 之间的是“粉板”上还空着的部分，可以用来记录新的操作。如果 write pos 追上 checkpoint，表示“粉板”满了，这时候不能再执行新的更新，得停下来先擦掉一些记录，把 checkpoint 推进一下。有了 redo log，InnoDB 就可以保证即使数据库发生异常重启，之前提交的记录都不会丢失，这个能力称为 **crash-safe**。
+>
+> **crash-safe：保证即使数据库发生异常重启，之前提交的记录都不会丢失**
+
+#### **binLog**（归档日志）
+
+1、Server层日志
+
+> 为什么会有两个日志？
+
+- 最开始 MySQL 里并没有 InnoDB 引擎。MySQL 自带的引擎是 MyISAM，但是 MyISAM 没有 **crash-safe** 的能力，binlog 日志只能用于归档。InnoDB 是另一个公司以插件形式引入 MySQL 的，既然只依靠 binlog 是没有 crash-safe 能力的，所以 **InnoDB 使用另外一套日志系统——也就是 redo log 来实现 crash-safe 能力**
+
+**区别：**
+
+- redo log 是 InnoDB 引擎特有的；binlog 是 MySQL 的 Server 层实现的，所有引擎都可以使用。
+- redo log 是物理日志，记录的是“在某个数据页上做了什么修改”；binlog 是逻辑日志，记录的是这个语句的原始逻辑，比如“给 ID=2 这一行的 c 字段加 1 ”。
+- redo log 是循环写的，空间固定会用完；binlog 是可以追加写入的。“追加写”是指 binlog 文件写到一定大小后会切换到下一个，并不会覆盖以前的日志。
+
+2、Binlog有两种模式，statement 格式的话是记sql语句， row格式会记录行的内容，记两条，**更新前和更新后都有**。
+
+**3、概念**
+
+- **binlog cache**：它是用于缓存binlog event的内存，大小由binlog_cache_size控制
+- **binlog cache 临时文件**：是一个临时磁盘文件，存储由于binlog cache不足溢出的binlog event，该文件名字由”ML”打头，由参数*max_binlog_cache_size*控制该文件大小
+- **binlog file**：代表binglog 文件，由*max_binlog_size*指定大小
+- **binlog event**：代表binlog中的记录，如MAP_EVENT/QUERY EVENT/XID EVENT/WRITE EVENT等
+
+> binlog cache和binlog临时文件都是在**事务运行过程**中写入，一旦事务提交，binlog cache和binlog临时文件都会释放掉。而且如果事务中包含多个DML语句，他们共享binlog cache和binlog 临时文件
+
+#### 更新语句的执行流程
+
+1、**事务开启**
+
+2、执行器先找引擎取 ID=2 这一行。ID 是主键，引擎直接用树搜索找到这一行。如果 ID=2 这一行所在的数据页本来就在内存中，就直接返回给执行器；否则，需要先从磁盘读入内存，然后再返回。
+
+3、**执行DML语句**：执行器拿到引擎给的行数据，把这个值加上 1，比如原来是 N，现在就是 N+1，得到新的一行数据，再调用引擎接口写入这行新数据。
+
+- **更新redolog**：将这个更新操作记录到 redo log 里面，此时 redo log 处于 **prepare** 状态。
+- **写入binglog cache**：如果binlog cache的空间已经满了，则将binlog cache的数据写入到binlog临时文件，同时清空binlog cache。
+  - 第一次执行DML语句时分配内存空间**binlogcache**
+
+4、**提交事务**：
+
+- 将binlog cache和binlog临时文件写入到binlog file中，释放binlog cache和binlog临时文件
+- redo log 改成提交（**commit**）状态
+
+> 当需要恢复到指定的某一秒时，比如某天下午两点发现中午十二点有一次误删表，需要找回数据，怎么做？
+
+- 建立临时库
+- 寻找最近一次的全量备份
+- 从备份的时间点开始，将备份的 binlog 依次取出来，重放到中午误删表之前的那个时刻。
+
+> redo log的两阶段提交
+
+- 为了保证一致性
+- **如果先写redolog，后写bin log**
+  - 假设在 redo log 写完，binlog 还没有写完的时候，MySQL 进程异常重启。由于我们前面说过的，redo log 写完之后，系统即使崩溃，仍然能够把数据恢复回来，所以恢复后这一行 c 的值是 1。但是由于 binlog 没写完就 crash 了，这时候 binlog 里面就没有记录这个语句。因此，之后备份日志的时候，存起来的 binlog 里面就没有这条语句。然后你会发现，如果需要用这个 binlog 来恢复临时库的话，由于这个语句的 binlog 丢失，这个临时库就会少了这一次更新，恢复出来的这一行 c 的值就是 0，与原库的值不同。
+- **如果先写bindolog，后写redo log**
+  - 如果在 binlog 写完之后 crash，由于 redo log 还没写，崩溃恢复以后这个事务无效，所以这一行 c 的值是 0。但是 binlog 里面已经记录了“把 c 从 0 改成 1”这个日志。所以，在之后用 binlog 来恢复的时候就多了一个事务出来，恢复出来的这一行 c 的值就是 1，与原库的值不同。
+- **两阶段提交**
+  - redolog只是完成了prepare， 而binlog又失败，那么事务本身会回滚，所以这个库里面status的值是0，如果通过binlog 恢复出一个库，status值也是0。
+
+#### undo Log（回滚日志）
+
+> 事务的**原子性：**
+>
+> - 保证一个事务中的增删改操作要么都成功，要么都不做。这时就需要 `undo log`，在对数据库进行修改前，会先记录对应的 undo log，然后在事务失败或回滚的时候，就可以用这些 undo log 来将数据回滚到修改之前的样子。
+
+行记录中会有三个隐藏列：
+
+- `DB_ROW_ID`：如果没有为表显式的定义主键，并且表中也没有定义唯一索引，那么InnoDB会自动为表添加一个`row_id`的隐藏列作为主键。
+- `DB_TRX_ID`：事务中对某条记录做增删改时，就会将这个事务的事务ID写入`trx_id`中。
+- `DB_ROLL_PTR`：回滚指针，本质上就是指向 undo log 的指针。
+
+![image.png](https://p3-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/6f5f991bf98040719aa9ef7f706f13b6~tplv-k3u1fbpfcp-watermark.awebp)
+
+> MVCC多版本控制中使用`undo log`
+
+<img src="https://p3-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/3379df8eddb94af3910673f6559b8852~tplv-k3u1fbpfcp-watermark.awebp" alt="img" style="zoom:50%;" />
+
+
+
+
 
 
 
@@ -334,12 +434,15 @@ select @@transaction_isolation;
 ReadView中4个重要的内容：
 
 - m_ids：**一个列表, 存储当前系统活跃的事务id（没有提交的事务）**，通过对照版本链找到已经提交的事务
-
 - min_trx_id：存m_ids的最小值
-
 - max_trx_id：系统分配给下一个事务的id
-
 - creator_trx_id:：生成readView事务的事务id
+
+1、如果被访问版本的`trx_id`属性值小于`m_ids`列表中最小的事务id，表明生成该版本的事务在生成`ReadView`前已经提交，所以该版本可以被当前事务访问。
+
+2、如果被访问版本的`trx_id`属性值大于`m_ids`列表中最大的事务id，表明生成该版本的事务在生成`ReadView`后才生成，所以该版本不可以被当前事务访问。
+
+3、如果被访问版本的`trx_id`属性值在`m_ids`列表中最大的事务id和最小事务id之间，那就需要判断一下`trx_id`属性值是不是在`m_ids`列表中，如果在，说明创建`ReadView`时生成该版本的事务还是活跃的，该版本不可以被访问；如果不在，说明创建`ReadView`时生成该版本的事务已经被提交，该版本可以被访问。
 
 > 已提交读和可重复读的区别就在于它们生成ReadView的策略不同
 
@@ -532,6 +635,21 @@ update：
 
 尽量不要产生死锁～～～
 
+> 死锁检测
+
+当出现死锁以后，有两种策略：
+
+- 一种策略是，直接进入等待，直到**超时**。这个超时时间可以通过参数 innodb_lock_wait_timeout 来设置。
+- 另一种策略是，发起**死锁检测**，发现死锁后，主动回滚死锁链条中的某一个事务，让其他事务得以继续执行。将参数 innodb_deadlock_detect 设置为 on，表示开启这个逻辑。
+
+> 怎么解决由这种热点行更新导致的性能问题呢？（假设有 1000 个并发线程要同时更新同一行，那么死锁检测操作就是 100 万这个量级的。）
+
+- 一种头痛医头的方法，就是如果你能确保这个业务一定不会出现死锁，**可以临时把死锁检测关掉**。但是这种操作本身带有一定的风险，因为业务设计的时候一般不会把死锁当做一个严重错误，毕竟出现死锁了，就回滚，然后通过业务重试一般就没问题了，这是业务无损的。而关掉死锁检测意味着可能会出现大量的超时，这是业务有损的。
+- 另一个思路是**控制并发度**。根据上面的分析，你会发现如果并发能够控制住，比如同一行同时最多只有 10 个线程在更新，那么死锁检测的成本很低，就不会出现这个问题。一个直接的想法就是，在客户端做并发控制。
+  - 但是，你会很快发现这个方法不太可行，因为客户端很多。我见过一个应用，有 600 个客户端，这样即使每个客户端控制到只有 5 个并发线程，汇总到数据库服务端以后，峰值并发数也可能要达到 3000。
+  - 因此，这个**并发控制要做在数据库服务端**。如果你有中间件，可以考虑在中间件实现；如果你的团队有能修改 MySQL 源码的人，也可以做在 MySQL 里面。基本思路就是，对于相同行的更新，在进入引擎之前排队。这样在 InnoDB 内部就不会有大量的死锁检测工作了。
+- 
+
 > 避免死锁
 
 - **以固定的顺序访问表和行**。
@@ -661,26 +779,178 @@ BTree又叫**多路平衡搜索树**，一颗m叉的Btree特性如下：
 
 #### B+Tree 结构
 
-是BTree的变种，B+Tree和BTree的区别：
+##### 插入操作
 
-- **n叉B+Tree最多包含n个key，而BTree最多包含n-1个**
-- B+Tree的叶子节点保存所有key信息，依照key大小顺序排列
-- 所有的非叶子节点都可以看作是key的索引部分
+B+树插入要记住这几个步骤：
 
-![在这里插入图片描述](https://img-blog.csdnimg.cn/20210408180108849.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
+- B+树插入都是在叶子结点进行的，就是插入前，需要先找到要插入的叶子结点。
+- 如果被插入关键字的叶子节点，当前含有的关键字数量是小于阶数m，则直接插入。
+- 如果插入关键字后，叶子节点当前含有的关键字数目等于阶数m，则插，该节点开始**分裂**为两个新的节点，一个节点包含⌊m/2⌋ 个关键字，另外一个关键字包含⌈m/2⌉个关键值。（⌊m/2⌋表示向下取整，⌈m/2⌉表示向上取整，如⌈3/2⌉=2）。
+- 分裂后，需要将第⌈m/2⌉的关键字上移到父结点。如果这时候父结点中包含的关键字个数小于m，则插入操作完成。
+- 分裂后，需要将⌈m/2⌉的关键字上移到父结点。如果父结点中包含的关键字个数等于m，则继续分裂父结点。
 
-由于B+树只有叶子节点保存key信息，查询任何key都要从root走到叶子节点，索引B+Tree的查询效率更高
+以一颗4阶的B+树为例子吧，4阶的话，关键值最多3（m-1）个。假设插入以下数据43，48，36，32,37,49,28.
 
-> B树和B+树的区别
+1. 在空树中插入43
 
-- B 树中每个节点同时存储 key 和 data，而 B+ 树中只有叶子节点才存储 data，非叶子节点只存储 key。
-- InnoDB 对 B+ 树进行了优化，**在每个叶子节点上增加了一个指向相邻叶子节点的链表指针，形成了带有顺序指针的 B+ 树**，提高区间访问的性能。
+<img src="https://p9-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/6b1519db7a344866b2d2c5331c110f55~tplv-k3u1fbpfcp-watermark.awebp" alt="img" style="zoom:50%;" />
 
-B+ 树的优点在于：
+这时候根结点就一个关键值，此时它是根结点也是叶子结点。
 
-① 由于 B+ 树在非叶子节点上不含数据信息，因此在内存页中能够存放更多的 key，数据存放得更加紧密，具有**更好的空间利用率**，访问叶子节点上关联的数据也具有更好的缓存命中率。
+1. 依次插入48，36
 
-② B+树的叶子结点都是相连的，因此对整棵树的遍历只需要一次线性遍历叶子节点即可。而 B 树则需要进行每一层的递归遍历，相邻的元素可能在内存中不相邻，所以缓存命中性没有 B+树好。但是 B 树也有优点，由于每个节点都包含 key 和 value，因此经常访问的元素可能离根节点更近，访问也更迅速。
+<img src="https://p1-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/8fd3f43b090849a68e6319d26aa274e5~tplv-k3u1fbpfcp-watermark.awebp" alt="img" style="zoom:50%;" />
+
+这时候跟节点拥有3个关键字，已经满了
+
+1. 继续插入 32，发现当前节点关键字已经不小于阶数4了，于是分裂
+
+第⌈4/2⌉=2（下标0,1,2）个，也即43上移到父节点。
+
+<img src="https://static01.imgkr.com/temp/92493cd24aaf4ee68ef7753ac6423d8b.png" alt="img" style="zoom:50%;" />
+
+1. 继续插入37，49，前节点关键字都是还没满的，直接插入，如下：
+
+<img src="https://p6-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/c4a527b97f8e4f9698fabf1cc75580e8~tplv-k3u1fbpfcp-watermark.awebp" alt="img" style="zoom:50%;" />
+
+1. 最后插入28，发现当前节点关键字也是不小于阶数4了，于是分裂，第⌈4/2⌉=2个，也就是36上移到父节点，因父子节点只有2个关键值，还是小于4的，所以不用继续分裂，插入完成
+
+<img src="https://p1-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/de6ae575df144e8a8357a9c29fd35e3c~tplv-k3u1fbpfcp-watermark.awebp" alt="img" style="zoom: 50%;" />
+
+##### 查找操作
+
+因为B+树的数据都是在叶子节点上的，内部节点只是指针索引的作用，因此，查找过程需要搜索到叶子节点上。还是以这颗B+树为例吧：
+
+<img src="https://static01.imgkr.com/temp/7936c203fb7e481091a8e7400c5a5d5f.png" alt="img" style="zoom:50%;" />
+
+**单值查询**
+
+假设我们要查的值为32.
+
+第一次磁盘 I/O，查找磁盘块1，即根节点（36,43）,因为32小于36，因此访问根节点的左边第一个孩子节点
+
+<img src="https://p3-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/b83c21448467448f97afa9ccecbc1c4b~tplv-k3u1fbpfcp-watermark.awebp" alt="img" style="zoom:50%;" />
+
+第二次磁盘 I/O, 查找磁盘块2，即根节点的第一个孩子节点，获得区间(28,32),遍历即可得32.
+
+<img src="https://static01.imgkr.com/temp/b1e3195c5a3749d9ae1195cfa3197780.png" alt="img" style="zoom:50%;" />
+
+**范围查询**
+
+假设我们要查找区间 [32,40]区间的值.
+
+第一步先访问根节点，发现区间的左端点32小于36,则访问根节点的第一个左子树(28,32);
+
+<img src="https://p6-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/b888144c35e04688b95f54ab243c28d8~tplv-k3u1fbpfcp-watermark.awebp" alt="img" style="zoom:50%;" />
+
+第二步访问节点（28,32），找到32，于是开始遍历链表，把[32,40]区间值找出来，这也是B+树比B-树高效的地方。
+
+<img src="https://p9-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/809183371d1f4520941b218a8641e8e5~tplv-k3u1fbpfcp-watermark.awebp" alt="img" style="zoom:50%;" />
+
+##### 删除操作
+
+B+树删除关键字，分这几种情况
+
+- 找到包含关键值的结点，如果关键字个数大于m/2，直接删除即可；
+
+  - 假设当前有这么一颗5阶的B+树
+
+  <img src="https://p3-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/26db5b75704c4309b997c6fc0273d47c~tplv-k3u1fbpfcp-watermark.awebp" alt="img" style="zoom:50%;" />
+
+  - 如果删除22，因为关键字个数为3 > 5/2=2， 直接删除（⌈⌉表示向上取整的意思）
+
+  <img src="https://static01.imgkr.com/temp/9fca707c65634d49a488d74f13311008.gif" alt="img" style="zoom:50%;" />
+
+- 找到包含关键值的结点,如果关键字个数大于m/2，并且关键值是当前节点的最大（小）值，并且该关键值存在父子节点中，那么删除该关键字，同时需要相应调整父节点的值。
+
+  <img src="https://p3-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/e81e147b313a4f5eaa201ba2f0b03849~tplv-k3u1fbpfcp-watermark.awebp" alt="img" style="zoom:50%;" />
+
+  - 如果删除20，因为关键字个数为3 > 5/2=2，并且20是当前节点的边界值，且存在父子节点中，所以删除后，其父子节点也要响应调整。
+
+  <img src="https://p3-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/91d11cd6465c4583813291185bc70c03~tplv-k3u1fbpfcp-watermark.awebp" alt="img" style="zoom:50%;" />
+
+- 找到包含关键值的结点，如果删除该关键字后，关键字个数小于⌈m/2⌉，并且其兄弟结点有多余的关键字，则从其兄弟结点借用关键字
+
+  - 以下这颗5阶的B+树，
+
+    <img src="https://static01.imgkr.com/temp/00b21728241449418fbb7a466522692a.png" alt="img" style="zoom:50%;" />
+
+  - 如果删除15,删除关键字的结点只剩1个关键字，小于5/2=2，不满足B+树特点，但是其兄弟节点拥有3个元素（7,8,9），可以借用9过来，如图：
+
+    <img src="https://static01.imgkr.com/temp/f2416d7008f64021a73396142887a514.gif" alt="img" style="zoom:50%;" />
+
+- 找到包含关键值的结点，如果删除该关键字后，关键字个数小于⌈m/2⌉，并且其兄弟结点没有多余的关键字，则与兄弟结点合并。
+
+  - 以下这颗5阶的B+树：
+
+    <img src="https://p3-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/b19b4c2c90bf4610a272467e71d8d92a~tplv-k3u1fbpfcp-watermark.awebp" alt="img" style="zoom:50%;" />
+
+  - 如果删除关键字7，删除关键字的结点只剩1个关键字，小于5/2=2，不满足B+树特点，并且兄弟结点没法借用，因此发生合并，如下：
+
+<img src="https://p3-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/21257fbbdc834400961b1d3f54b7ce80~tplv-k3u1fbpfcp-watermark.awebp" alt="img" style="zoom:50%;" />
+
+主要流程酱紫：
+
+- 因为7被删掉后，只剩一个8的关键字，不满足B+树特点（m/2<=关键字<=m-1）。
+- 并且没有兄弟结点关键字借用，因此8与前面的兄弟结点结合。
+- 被删关键字结点的父节点，7索引也被删掉了，只剩一个9，并且其右兄弟结点（18,20）只有两个关键字，也是没得借，因此在此合并。
+- 被删关键字结点的父子节点，也和其兄弟结点合并后，只剩一个子树分支，因此根节点（16）也下移了。
+
+所以删除关键字7后的结果如下：
+
+![img](https://static01.imgkr.com/temp/09033dfd823440f6bae002898b85c8b7.png)
+
+##### 内存结构
+
+- 在InnoDB中，索引默认使用的数据结构为**B+树**，而`B+树里的每个节点都是一个页`，默认的页大小为`16KB`。
+- 非叶子节点存的是索引值以及页的偏移量，而叶子节点上存放的则是完整的每行记录
+
+<img src="https://img-blog.csdnimg.cn/cb2dc349e27b47f2ad7afaf98e81cad2.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom: 33%;" />
+
+> B+树能够存多少数据？
+
+**非叶子节点**
+
+- 页默认16KB
+- File Header、Page Header等一共占102个字节
+- Infimum + Supremum分别占13个字节
+- 记录头占5个字节
+- id占为int，占4个字节
+- 页目录的偏移量占4个字节
+
+所以，非叶子节点能存多少条索引记录呢
+
+```
+   非叶子节点能存放的索引记录
+=  (页大小 - File Header - Page Header - ...) / ( 主键 + 页偏移量 + 下一条记录的偏移量)
+= （16KB - 128B) / (5B + 4B + 4B) 
+=  16256 / 13
+=  1250 条
+```
+
+**叶子节点**
+
+- 变长列表占1个字节
+- null标志位忽略
+- 记录头占5个字节
+- id占为int，占4个字节
+- name为VARCHAR，编码为UTF8，为了好算，所有行记录我都只用两个中文，那就是 2 * 3B = 6个字节
+- 事务ID列占6个字节
+- 回滚指针列占7个字节
+
+```
+   叶子节点能存放的数据记录
+=  (页大小 - File Header - Page Header - ...) / ( 主键 + 字段 + 下一条记录的偏移量)
+= （16KB - 128B) / (1B + 5B + 4B + 6B + 6B + 7B) 
+=  16256 / 29
+=  560 条
+```
+
+**高度为3的B+树**
+
+- 根节点能放1250条索引记录
+- 第二层能放1250 * 1250 = 1,562,500条索引记录
+- 叶子节点 1250 * 1250 * 560 = 875,000,000条数据记录，八亿多条数据
 
 #### B树和B+树的区别
 
@@ -911,6 +1181,32 @@ explain select * from city where lower(city_name)='london';
 **删除无用索引**
 
 MySQL 允许在相同列上创建多个索引，重复的索引需要单独维护，并且优化器在优化查询时也需要逐个考虑，这会影响性能。重复索引是指在相同的列上按照相同的顺序创建的相同类型的索引，应该避免创建重复索引。如果创建了索引 (A,B) 再创建索引 (A) 就是冗余索引，因为这只是前一个索引的前缀索引，对于 B-Tree 索引来说是冗余的。解决重复索引和冗余索引的方法就是删除这些索引。除了重复索引和冗余索引，可能还会有一些服务器永远不用的索引，也应该考虑删除。
+
+### 索引下推
+
+满足最左前缀原则的时候，最左前缀可以用于在索引中定位记录。那些不符合最左前缀的部分，会怎么样呢？
+
+以市民表的联合索引（name, age）为例。如果现在有一个需求：检索出表中“名字第一个字是张，而且年龄是 10 岁的所有男孩”。那么，SQL 语句是这么写的：
+
+```sql
+mysql> select * from tuser where name like '张%' and age=10 and ismale=1;
+```
+
+你已经知道了前缀索引规则，所以这个语句在搜索索引树的时候，只能用 “张”，找到第一个满足条件的记录 ID3。
+
+当然，这还不错，总比全表扫描要好。
+
+然后呢？当然是判断其他条件是否满足。
+
+**在 MySQL 5.6 之前**，只能从 ID3 开始一个个回表。到主键索引上找出数据行，再对比字段值。
+
+<img src="https://img-blog.csdnimg.cn/135b9cd50a404b81904f0710b5baefa7.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom: 33%;" />
+
+而 **MySQL 5.6 引入的索引下推优化**（index condition pushdown)， 可以在索引遍历过程中，对索引中包含的字段先做判断，直接过滤掉不满足条件的记录，减少回表次数。
+
+<img src="https://img-blog.csdnimg.cn/a6ccafb180964c4091257011de3965f9.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom: 33%;" />
+
+
 
 ## 😊 存储过程和函数
 
