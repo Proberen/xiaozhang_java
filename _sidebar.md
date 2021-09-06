@@ -8,7 +8,7 @@
 	* [Java虚拟机](虚拟机/尚硅谷复习视频)
 	* [Spring](框架/Spring基础)
 	* [设计模式](设计模式/设计模式)
-	* [分布式](分布式/kafka)
+	* [分布式 / 消息队列](分布式/kafka)
 * 🐛 数据库
     * [MySQL](MySQL/mysql)
     * [Redis](Redis/Redis)
