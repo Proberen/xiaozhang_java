@@ -1,5 +1,104 @@
 #  Redis
 
+## 问题
+
+### 如何保证mysql与缓存一致性？
+
+#### 读取缓存
+
+读取缓存的方案都是按照下面的流程进行操作的：
+
+<img src="https://img-blog.csdnimg.cn/58f44406193a455087c25bdc5454e002.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:40%;" />
+
+
+
+
+
+#### 更新一致性方案——设置缓存过期时间
+
+所有的写操作都以数据库为准，如果数据库写入成功但是缓存更新失败，只要缓存到期时间之后后面读缓存时自然会去数据库读取新的缓存然后更新
+
+#### 更新一致性方案——先更新数据库再更新缓存
+
+> 被普遍反对！
+
+原因：
+
+- **数据安全角度**：如果请求A和请求B同时进行操作，A先更新了数据库的一条数据，随后B马上有更新了该条数据，但是可能因为网络延迟等原因，B却比A先更新了缓存，就会出现一种什么情况呢？缓存中的数据并不最新的B更新过的数据，就导致了数据不一致的情况。
+- **业务场景角度**：如果是写多读少的业务，这种方案会导致数据还没读缓存就被频繁更新，浪费性能
+
+#### 更新一致性方案——先删除缓存再更新数据库
+
+**1、问题：脏数据**
+
+- A进行更新操作，B进行查询操作；A进行写操作前删除了缓存，B读的时候发现没有缓存就会查询数据库，如果A事务没有提交B就会查询到旧值存储到缓存中，就会导致数据不一致问题
+
+**2、解决：延时双删**
+
+<img src="https://img-blog.csdnimg.cn/b85b7ad8935c4b4d83df7fd62c356ad6.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:40%;" />
+
+过程：
+
+- 删除Redis缓存
+- 更新数据库
+- 等待一段时间，删除Redis缓存（**等待时间：读数据业务逻辑耗时+几百ms**）
+
+**目的：确保B读请求结束A写请求能够删除B读请求存储的脏数据**
+
+**3、问题：**第二次删除缓存失败，还是会造成缓存和数据库的不一致
+
+#### 更新一致性方案——先更新数据库再删除缓存
+
+缓存更新方案：Cache-Aside Pattern
+
+- 应用程序应该从缓存中获取数据，获取成功就直接返回，获取失败就从数据库中读取，成功后放入缓存
+- 更新数据时先把数据库存储到数据库中成功后再让缓存失效
+
+**问题：**
+
+有两个请求A和B，A进行查询同时B进行更新，假设发生下述情况：
+
+①此时缓存刚好失效
+
+②请求A 就会去查询数据库得到一个旧的值
+
+③请求B将新的值写入数据库
+
+④请求B写入成功后删除缓存
+
+⑤请求A将查到的机制写入缓存，产生脏数据...
+
+> 但是这种情况的概率很小
+
+#### 如果删除缓存失败怎么办？
+
+解决：重试机制
+
+<img src="https://img-blog.csdnimg.cn/f6abfeb75421436fa93f47935b2154d6.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:40%;" />
+
+解决：读取binlog异步删除缓存
+
+### 单线程为什么快？
+
+**1、为什么不使用多线程？**
+
+- 减少多线程带来的额外开销和多线程同时访问共享资源的并发问题
+
+**2、为什么单线程快？**
+
+- Redis大部分操作在内存实现
+- 采用高效的数据结构
+- 多路I/O复用，能够并发处理大量客户端请求
+
+**3、多路I/O复用**
+
+- 一个线程处理多个IO流，**select/epoll机制**
+- 该机制允许内核中同时存在多个监听socket和已连接socket；内核会一直监听这些socket上的连接请求或数据请求；一旦有请求到达就交给redis线程处理
+- select/epoll 提供了基于事件的**回调机制**，即针对不同事件的发生，调用相应的处理函数。
+  - **回调机制**：select/epoll 一旦监测到 FD 上有请求到达时，就会触发相应的事件；这些事件会被放进一个事件队列，redis对事件队列不断处理，Redis处理的时候会调用相应的处理函数，这就实现了基于事件的回调
+
+<img src="https://img-blog.csdnimg.cn/d52e5e9dbd494cb19f6f09039f8aebeb.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
+
 ## 😊 复习
 
 > 8大数据类型
@@ -389,6 +488,21 @@ String的数据结构为简单动态字符串（SDS），是可以修改的字�
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/77dffea9b4bd42509d140cead0bc18a8.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
 
 内部为当前字符串实际分配的空间capacity，一般高于实际字符串长度len，当字符串长度小于1M时，扩容都是2倍，如果超过1M，扩容一次只多扩容1M空间。（最长512M）
+
+**SDS结构**
+
+- 主要由`len`（buf数据所保存字符串的长度）、`free`（未使用的字节数量）、`buf[]`（保存字符串的数组）三个属性组成
+
+<img src="https://img-blog.csdnimg.cn/e01985bdbd994d71aec1fe52945d27e1.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
+
+- 优点
+  - 效率高：使用`strlen`获取字符串长度在SDS中len属性记录了字符串长度，获取字符串长度的时间复杂度为O(1)
+  - 数据溢出：SDS会自动扩容
+- **内存重分配策略**：解决了字符串在增长和缩短时内存分配问题
+  - **空间预分配策略**：当修改字符串时，会为SDS分配修改所必要的空间，还会为SDS分配额外使用的空间`free`，如果字符串修改后`len`小于1M，那么`free`和`len`相等，`len`值大于等于1M，那么`free`为1M
+  - **惰性空间释放**：优化字符串缩短操作，使用free记录剩余空间
+
+
 
 ### List：单键多值
 
@@ -851,6 +965,44 @@ zset是Redis提供的一个非常特别的数据结构，一方面等价于java�
 
 - **hash**，hash的作用是关联value和score，保障元素value的唯一性，可以通过元素value找到对应的score
 - **跳表**，目的是给value排序，根据score的范围获取元素列表
+
+#### 跳表
+
+1、可以实现二分查找的有序链表
+
+**2、查找的时间复杂度**
+
+- 时间复杂度=索引高度*每层索引遍历元素的个数
+- O（Logn）
+
+**3、空间复杂度**
+
+- O（n）
+
+**4、插入数据**
+
+- 概率算法：告诉我们这个元素需要插入到几级索引中
+- 最坏时间复杂度：O（logn）
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1334,8 +1486,6 @@ expire lock-key second
 pexpire lock-key milliseconds
 ```
 
-## 
-
 
 
 ## 😊 持久化
@@ -1352,7 +1502,7 @@ pexpire lock-key milliseconds
 
 > 持久化过程保存什么？
 
-1、RDB：将当前数据状态进行保存，**快照形式**，存储数据结果，存储格式简单，关注点在数据
+1、RDB：将当前数据状态进行保存，**快照形式**，存储数据结果，存储格式简单，关注点在数据（**全量快照**）
 
 2、AOF：将数据的操作过程进行保存，**日志形式**，存储操作过程，存储格式复杂，关注点在数据的操作过程
 
@@ -1401,7 +1551,7 @@ bgsave
 手动启动后台保存操作，但是不是立即执行的
 
 ```sql
-127.0.0.1:6379> bgsave                                                                    
+127.0.0.1:6379> bgsave                                            
 Background saving started 
 ```
 
@@ -1410,6 +1560,18 @@ Background saving started
 <img src="https://img-blog.csdnimg.cn/2021041722000451.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
 
 **bgsave是针对save阻塞问题做的优化，Redis内部所涉及的RDB操作都采用bgsave方式**
+
+> 快照时数据能够修改吗？
+
+Redis借助操作系统提供的写时复制（COW），在执行快照的时候能够正常处理些操作
+
+bgsave子进程是由主线程fork生成的，可以共享主线程的内存数据；如果主线程要修改一块数据，那么这个数据块就会被复制一份，主线程在这个数据副本上进行修改。bgsave可以继续把原来的数据写入rdb
+
+这既保证了快照的完整性，也允许主线程同时对数据进行修改，避免了对正常业务的影响
+
+<img src="https://img-blog.csdnimg.cn/77090b87a1134c398c20b07bc9c79f63.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
+
+
 
 #### 自动执行
 
@@ -1480,12 +1642,6 @@ save配置要根据实际业务设置，随意设置会出现问题
 
 <img src="https://img-blog.csdnimg.cn/20210418093029908.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
 
-三个写数据的策略
-
-- **always**：每次写入操作均同步到AOF文件中，**数据零误差，性能较低**
-- **everysec**：每秒将缓冲区的指令同步到AOF文件中，数据**准确性较高，性能较高**，在系统突然宕机的情况下丢失1s的数据
-- **no**：操作系统控制每次同步到AOF文件的周期，**过程不可控制**
-
 4、AOF功能开启
 
 - 配置：开启AOF持久化功能
@@ -1499,6 +1655,22 @@ appendonly yes
 ```sql
 appendfsync always|everysec|no
 ```
+
+#### 风险
+
+1、如果刚执行完一个命令就宕机了，这个命令和数据会有丢失的风险
+
+2、AOF日志在主线程执行，在把日志写入磁盘时，磁盘写压力大，导致写盘很慢，导致后面操作无法执行
+
+#### 回写策略
+
+三个写数据的策略
+
+- **always**：每次写入操作均同步到AOF文件中，**数据零误差，性能较低**
+- **everysec**：每秒将缓冲区的指令同步到AOF文件中，数据**准确性较高，性能较高**，在系统突然宕机的情况下丢失1s的数据
+- **no**：操作系统控制每次同步到AOF文件的周期，**过程不可控制**
+
+<img src="https://img-blog.csdnimg.cn/6a0844aeff924075ba596c47451a1474.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
 
 #### AOF重写
 
@@ -1519,49 +1691,16 @@ appendfsync always|everysec|no
 - 对同一个数据的多条命令进行合并
 - 把rdb快照以二进制的形式附在新的aof头部
 
-方式：
+> 重写会阻塞吗？
 
-- 手动
+重写过程由后台子进程来完成，这也是为了避免阻塞主线程，导致数据库性能下降
 
-```sql
-bgrewriteaof
-```
+**一个拷贝，两处日志**
 
-![在这里插入图片描述](https://img-blog.csdnimg.cn/20210418094753542.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
+- **一个拷贝**：每次执行重写时候，主线程fork出后台的bgrewriteaof子进程。此时，fork 会把主线程的内存拷贝一份给 bgrewriteaof 子进程，这里面就包含了数据库的最新数据。然后，bgrewriteaof 子进程就可以在不影响主线程的情况下，逐一把拷贝的数据写成操作，记入重写日志
+- **两处日志**：如果有写操作，第一处日志就是指正在使用的AOF日志，Redis会把这个操作写到它的缓冲区；第二处日志指的是重写日志
 
-- 自动（配置）
-
-```sql
-auto-aof-rewrite-min-size size
-auto-aof-rewrite-percentage percent
-```
-
-- 自动重写触发对比参数
-
-```sql
-aof_current_size
-aof_base_size
-```
-
-- 自动重写触发条件
-
-```sql
-aof_current_size > auto-aof-rewrite-min-size
-或者
-(aof_current_size - aof_base_size) / aof_base_size >= auto-aof-rewrite-percentage
-```
-
-#### AOF工作流程
-
-<img src="https://img-blog.csdnimg.cn/20210418095341735.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
-
-
-
-
-
-![在这里插入图片描述](https://img-blog.csdnimg.cn/20210418095415457.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
-
-
+<img src="https://img-blog.csdnimg.cn/40fb5c3624894d1a9bd83240cdc7b5b3.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
 
 
 
@@ -1869,7 +2008,38 @@ public class LRUCache{
 
 3、每次主服务器进行写操作后，和从服务器进行数据同步
 
-### 哨兵模式
+#### 主从库如何进行第一次同步
+
+**1、第一阶段**：主从库间建立连接、协商同步的过程。从库和主库建立起来连接，告诉主库即将进行同步，主库确认回复后主从库就可以开始同步了
+
+- 从库给主库发送psync命令，表示要进行数据同步
+- 主库收到psync命令后会用FULLRESYNC响应命令带上两个参数（**表示第一次复制采用全量复制**）
+
+2、**第二阶段**：主库将所有数据同步给从库，从库收到数据后在本地完成数据加载
+
+- 主库执行bgsave命令生成rdb文件，将文件发送给从库
+- 从库清空数据库，加载rdb文件
+- 同步过程中的写操作主库会在内存中用buffer记录写操作
+
+3、**第三阶段**：主库把第二阶段执行过程中新收到的写命令发送给从库
+
+#### 主-从-从模式
+
+> 如果从库数量很多，都需要和主库进行全量复制，就会导致主库忙于fork子进程生成RDB文件，进行数据全量同步，“主-从-从”可以分担主库压力
+>
+> redis cluster模式下，无法使用主-从-从的级联模式
+
+<img src="https://img-blog.csdnimg.cn/dee1641f08cb4982a6b6a9474cb48911.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
+
+#### 主从库间网络断了怎么办
+
+1、网络断后，主从库会采用增量复制的方式继续同步
+
+2、主库会把断连期间收到的写操作命令写入 replication buffer，同时也会把这些操作命令也写入 repl_backlog_buffer 这个缓冲区。
+
+3、repl_backlog_buffer 是一个环形缓冲区，主库会记录自己写到的位置，从库则会记录自己已经读到的位置。
+
+### 哨兵机制
 
 > 能够后台监控主机是否故障，如果故障了根据投票数量自动将从库转换为主库
 
@@ -1879,39 +2049,132 @@ public class LRUCache{
 
 主要功能包括：
 
-- 主节点生存检测
-- 主从操作检测
+- 主节点生存检测，通过ping监控
 - 自动故障转移：**当主节点无法正常工作时，Sentinel将启动自动故障转移操作。它将与发生故障的主节点处于主从关系的从节点之一升级到新的主节点，并将其他从节点指向新的主节点；**
-- 主从切换
+- 通知：通知其他从库和客户端新的主库
 
-#### 缺点：复制延时
+#### 监控：主观下线和客观下线
 
-由于所有的写操作都是先在master上操作，然后同步更新到slave上，所以从master同步到slave机器有一定的延迟，当系统很繁忙的时候，延迟问题会更加严重，slave机器数量的增加也会使这个问题更加严重
+1、哨兵进程会使用ping命令检测它自己和主、从库的网络连接情况，用来判断实例的状态
 
-#### 故障恢复
+2、**主观下线**：发现从库超时了就标记为主观下线
 
-![在这里插入图片描述](https://img-blog.csdnimg.cn/946cd9c3b9c1478aa55e5b0cfe359530.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
+3、误判一般会发生在集群网络压力较大、网络拥塞，或者是主库本身压力较大的情况，**如何减少误判？**
 
-优先级在redis.conf中默认，slave-priority 100，值越小优先级越高
+- **哨兵集群**：通常采用多实例组成的集群模式进行部署，引入多个哨兵实例一起来判断，就可以避免单个哨兵因为自身网络状态不好而误判主库下线的情况。
 
-偏移量是指获得主机数据最全的
+4、**客观下线**：只有大多数的哨兵实例，都判断主库已经“主观下线”了，主库才会被标记为“客观下线”
 
-每个redis实例启动后都会随机产生runid
+#### 选定新的主库
 
-## 😊 Redis集群
+1、过程：筛选+打分
 
-> 问题：
->
-> - 容量不够，redis如何进行扩容？
-> - 并发写操作，redis如何分摊？
->
-> 方法：无中心化集群
+- 先按一定的照筛选条件把不符合条件的从库去掉，再按照一定的规则给剩下的从库打分
 
-**1、什么是集群？**
+<img src="https://img-blog.csdnimg.cn/cbce5522e96c4db4b7975e387179b29f.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
 
-- Redis集群实现了对Redis的水平扩容，即启动N个redis节点，将整个数据库分布存储在这N个节点中，每个节点存储总数据的1/N
+**2、筛选条件**
 
+- 检查从库的在线状态、判断之前的网络连接状态
 
+**3、打分**
+
+- 第一轮：优先级高的从库得分高（`slave-priority`配置项）
+- 第二轮：和旧主库同步程度最接近的从库得分高
+- 第三轮：ID号小的从库得分高（最早连接上）
+
+### 哨兵集群
+
+在配置哨兵集群的时候，配置哨兵的信息需要设置**主库的IP**和**端口**，**并没有配置其他哨兵的连接信息**
+
+#### 基于pub/sub机制的哨兵集群组成
+
+1、哨兵实例之间可以相互发现，归功于Redis提供的发布/订阅机制
+
+**2、哨兵间如何互相知道彼此地址？**
+
+- 哨兵只要和主库建立起了连接，就可以在主库上发布消息（比如发布自己的连接信息），同时也可以从主库上订阅消息，获得其他哨兵发布的连接信息
+- 频道：`__sentinel__:hello`
+
+<img src="https://img-blog.csdnimg.cn/46b627811f8941efbfa8735e9285dc45.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
+
+**3、哨兵如何知道从库的IP地址和端口？**
+
+- 哨兵向主库发送`INFO`命令，主库返回从库列表给哨兵
+
+<img src="https://img-blog.csdnimg.cn/4881d351a5c34ef09b2c8f6206a25e95.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
+
+#### 基于pub/sub机制的客户端事件通知
+
+**1、哨兵是特殊的redis实例**
+
+- 每个哨兵也提供发布/订阅机制，客户端可以从哨兵订阅信息
+
+2、哨兵提供不同的消息订阅频道
+
+<img src="https://img-blog.csdnimg.cn/9d8c9f1ecc2642149f2601d7d8ce2f04.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
+
+#### 由哪个哨兵执行主从切换？
+
+1、判断客观观下线
+
+- 任何一个哨兵只要判断主库“主观下线”后就会给其他哨兵发送is-master-down-by-addr 命令，其他哨兵也会根据自己和主库的连接情况做出响应
+- 一个哨兵获得了所需要的赞同票数后可以标记主库“客观下线”
+- **此时这个哨兵会给其他哨兵发送命令，表示希望自己来执行主从切换，并让其他哨兵投票（Leader选取）**
+
+**2、Leader选取**
+
+- 需要满足两个条件：
+  - 拿到半数以上的赞成票
+  - 拿到的票数大于等于哨兵配置文件的quorum值
+
+3、需要注意的是，如果哨兵集群只有 2 个实例，此时，一个哨兵要想成为 Leader，必须获得 2 票，而不是 1 票。所以，如果有个哨兵挂掉了，那么，此时的集群是无法进行主从库切换的。因此，**通常我们至少会配置 3 个哨兵实例**。这一点很重要，你在实际应用时可不能忽略了。
+
+## 😊切片集群
+
+1、概念
+
+- 切片集群也叫分片集群，指启动多个Redis实例组成一个集群，然后按照一定的规则将收到的数据划分成多份，每一份用一个实例来保存
+
+<img src="https://img-blog.csdnimg.cn/ba87fc1e7abf4de18a14decf5427853c.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
+
+### 如何保存更多数据？
+
+1、为了保存大量的数据，使用大内存云主机（纵向扩展）和切片集群（横向扩展）两种方法
+
+- **纵向扩展**：升级单个redis实例的资源配置，包括增加内存容量、增加磁盘容量等
+- **横向扩展**：增加redis实例的个数
+
+2、使用横向扩展要解决的两个问题：
+
+- 数据在多个实例如何分布？
+- 客户端怎么确定想要访问的数据在哪里？
+
+### 数据切片和实例的对应分布关系
+
+#### Redis Cluster
+
+1、在redis 3.0之后，官方提供了Redis Cluster的方案用于实现切片集群，规定了数据和实例的对应规则
+
+**2、Slot**
+
+- Redis Cluster一个切片集群由16384个哈希槽
+- 哈希槽类似于数据分区，每个键值对都会根据key被映射到一个哈希槽中
+
+**3、映射过程**
+
+- 根据key按照CRC16算法计算一个16bit的值
+- 用这个值对16384取模，得到哈希槽
+
+**4、哈希槽的映射**
+
+- 使用cluster create创建集群，此时redis会自动把这些槽平均分布在集群实例上
+
+<img src="https://img-blog.csdnimg.cn/64bebe51c02d4b038cd2dc4e069a2731.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
+
+### 客户端如何定位数据？
+
+一般来说，客户端和集群实例建立连接后，实例就会把哈希槽的分配信息发给客户端。但是，**在集群刚刚创建的时候，每个实例只知道自己被分配了哪些哈希槽，是不知道其他实例拥有的哈希槽信息的**
 
 ## 😊 应用问题
 
