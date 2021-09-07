@@ -99,6 +99,260 @@
 
 <img src="https://img-blog.csdnimg.cn/d52e5e9dbd494cb19f6f09039f8aebeb.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
 
+### select、poll、epoll
+
+#### 基本的socket编程模型
+
+1、服务端和客户端进行通信时，在服务器端通过以下三步来创建监听客户端连接的**监听套接字（listening socket）**
+
+- 调用`socket`函数，创建一个套接字（**主动套接字**）
+- 调用`bind`函数，将主动套接字和当前服务器的IP和监听端口进行绑定
+- 调用`listen`函数，将主动套接字转为监听套接字，开始监听客户端的连接
+
+在完成上述三步之后，服务器端就可以接收客户端的连接请求了，可以运行一个循环流程，在流程中调用`accept`函数，用于接收客户端连接请求
+
+- `accept`函数是阻塞函数，如果此时一直没有客户端连接请求，那么服务器端执行流程会一直阻塞在accept函数
+
+最后，服务器端可以通过调用`recv`或者`send`函数在刚刚返回的已连接套接字上，接收并处理读写请求，或者将数据发送给客户端
+
+```c
+listenSocket = socket(); //调用socket系统调用创建一个主动套接字
+bind(listenSocket);  //绑定地址和端口
+listen(listenSocket); //将默认的主动套接字转换为服务器使用的被动套接字，也就是监听套接字
+while (1) { //循环监听是否有客户端连接请求到来
+   connSocket = accept(listenSocket); //接受客户端连接
+   recv(connsocket); //从客户端读取数据，只能同时处理一个客户端
+   send(connsocket); //给客户端返回数据，只能同时处理一个客户端
+}
+```
+
+2、在基本的 Socket 编程模型中，accept 函数只能在一个监听套接字上监听客户端的连接，recv 函数也只能在一个已连接套接字上，等待客户端发送的请求。
+
+**3、IO多路复用机制**
+
+- 可以让程序通过调用多路复用函数，同时监听多个套接字上的请求，既包括监听套接字上的请求也包括已连接套接字的请求
+
+#### select和poll机制实现IO多路复用
+
+**1、select机制**
+
+- 参数：
+  - `__nfds`：监听的文件描述符数量
+  - `*__readfds、*__writefds、*__exceptfds`：被监听描述符的三个集合（fd_set结构）
+  - `*__timeout`：监听时阻塞等待的超时时长
+- 监听的事件：**读数据事件、写数据事件、异常事件**
+- **对于每一个描述符集合，都可以监听1024个描述符**
+- 如何使用select机制实现网络通信
+  - 调用前，创建好传递给select函数的描述符集合，再创建监听套接字，将套接字的描述符加入到创建好的描述符集合中
+  - 调用select函数，把创建好的描述符集合作为参数传递给select函数；程序调用后会发生阻塞，当select函数检测到有描述符就绪后，就会结束阻塞，并返回就绪的文件描述符数量
+  - 在描述符集合中查找哪些描述符就绪了，对这些描述符对应的套接字进行处理，在该套接字上进行读写操作
+
+<img src="https://img-blog.csdnimg.cn/dc90ad8c8c8a407bb14fe43a22d13335.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA5b-r5LmQ55qE5Yay5rWq56CB5Yac,size_20,color_FFFFFF,t_70,g_se,x_16" alt="在这里插入图片描述" style="zoom:40%;" />
+
+```c
+int sock_fd,conn_fd; //监听套接字和已连接套接字的变量
+sock_fd = socket() //创建套接字
+bind(sock_fd)   //绑定套接字
+listen(sock_fd) //在套接字上进行监听，将套接字转为监听套接字
+
+fd_set rset;  //被监听的描述符集合，关注描述符上的读事件
+ 
+int max_fd = sock_fd
+
+//初始化rset数组，使用FD_ZERO宏设置每个元素为0 
+FD_ZERO(&rset);
+//使用FD_SET宏设置rset数组中位置为sock_fd的文件描述符为1，表示需要监听该文件描述符
+FD_SET(sock_fd,&rset);
+
+//设置超时时间 
+struct timeval timeout;
+timeout.tv_sec = 3;
+timeout.tv_usec = 0;
+ 
+while(1) {
+   //调用select函数，检测rset数组保存的文件描述符是否已有读事件就绪，返回就绪的文件描述符个数
+   n = select(max_fd+1, &rset, NULL, NULL, &timeout);
+ 
+   //调用FD_ISSET宏，在rset数组中检测sock_fd对应的文件描述符是否就绪
+   if (FD_ISSET(sock_fd, &rset)) {
+       //如果sock_fd已经就绪，表明已有客户端连接；调用accept函数建立连接
+       conn_fd = accept();
+       //设置rset数组中位置为conn_fd的文件描述符为1，表示需要监听该文件描述符
+       FD_SET(conn_fd, &rset);
+   }
+
+   //依次检查已连接套接字的文件描述符
+   for (i = 0; i < maxfd; i++) {
+        //调用FD_ISSET宏，在rset数组中检测文件描述符是否就绪
+       if (FD_ISSET(i, &rset)) {
+         //有数据可读，进行读数据处理
+       }
+   }
+}
+```
+
+- 缺点：
+  - 对单个进程监听的文件描述符数量有限
+  - 当select函数返回后需要遍历描述符集合找到具体就绪的描述符
+
+**2、poll机制**
+
+- 参数：
+
+  - `*__fds`：pollfd 结构体数组，包含要监听的描述符，以及描述符上要监听的事件类型
+
+    ```c
+    struct pollfd {
+        int fd;         //进行监听的文件描述符
+        short int events;       //要监听的事件类型
+        short int revents;      //实际发生的事件类型
+    };
+    ```
+
+  - `_nfds`：表示*__fds数据元素的个数
+
+  - `_timeout`：表示poll函数阻塞的超时事件
+
+- 通信流程
+
+  - 创建pollfd数组和监听套接字，进行绑定
+  - 将监听套接字加入pollfd数组，并设置其监听读事件，也就是客户端的连接请求
+  - 循环调用poll函数，检测pollfd数组就绪的文件描述符
+    - 如果是连接套接字就绪，表明有客户端连接，使用accept接收连接，并创建已连接套接字，加入pollfd数组，监听读事件
+    - 如果是已连接套接字就绪，表明客户端有读写请求，调用recv/send函数处理
+
+  ```c
+  int sock_fd,conn_fd; //监听套接字和已连接套接字的变量
+  sock_fd = socket() //创建套接字
+  bind(sock_fd)   //绑定套接字
+  listen(sock_fd) //在套接字上进行监听，将套接字转为监听套接字
+  
+  //poll函数可以监听的文件描述符数量，可以大于1024
+  #define MAX_OPEN = 2048
+  
+  //pollfd结构体数组，对应文件描述符
+  struct pollfd client[MAX_OPEN];
+  
+  //将创建的监听套接字加入pollfd数组，并监听其可读事件
+  client[0].fd = sock_fd;
+  client[0].events = POLLRDNORM; 
+  maxfd = 0;
+  
+  //初始化client数组其他元素为-1
+  for (i = 1; i < MAX_OPEN; i++)
+      client[i].fd = -1; 
+  
+  while(1) {
+     //调用poll函数，检测client数组里的文件描述符是否有就绪的，返回就绪的文件描述符个数
+     n = poll(client, maxfd+1, &timeout);
+     //如果监听套件字的文件描述符有可读事件，则进行处理
+     if (client[0].revents & POLLRDNORM) {
+         //有客户端连接；调用accept函数建立连接
+         conn_fd = accept();
+  
+         //保存已建立连接套接字
+         for (i = 1; i < MAX_OPEN; i++){
+           if (client[i].fd < 0) {
+             client[i].fd = conn_fd; //将已建立连接的文件描述符保存到client数组
+             client[i].events = POLLRDNORM; //设置该文件描述符监听可读事件
+             break;
+            }
+         }
+         maxfd = i; 
+     }
+     
+     //依次检查已连接套接字的文件描述符
+     for (i = 1; i < MAX_OPEN; i++) {
+         if (client[i].revents & (POLLRDNORM | POLLERR)) {
+           //有数据可读或发生错误，进行读数据处理或错误处理
+         }
+     }
+  }
+  ```
+
+- **和select函数相比，poll函数允许一次监听超过1024个文件描述符，但是仍然需要遍历每个文件描述符**
+
+#### epoll机制实现IO多路复用
+
+1、epoll机制使用`epoll_event`结构体来记录待监听的文件描述符及其监听的事件类型
+
+- `events`：整数类型变量，取值使用不同的宏定义值
+- `epoll_data_t`：联合体变量
+  - fd：记录文件描述符
+
+```c
+typedef union epoll_data
+{
+  ...
+  int fd;  //记录文件描述符
+  ...
+} epoll_data_t;
+
+
+struct epoll_event
+{
+  uint32_t events;  //epoll监听的事件类型
+  epoll_data_t data; //应用程序数据
+};
+```
+
+2、`epoll_create`函数
+
+- 创建一个epoll实例，维护两个结构，分别是**记录要监听的文件描述符和已经就绪的文件描述符**，对于已经就绪的文件描述符会被返回给用户程序处理
+- 所以就不需要遍历查询哪些文件描述符已经就绪
+
+3、`epoll_ctl`函数
+
+- 给被监听的文件描述符添加事件类型
+
+4、`epoll_wait`函数
+
+- 获取就绪的文件描述符
+
+<img src="https://img-blog.csdnimg.cn/48eca7c0f422484a90b8c0aedf4efe79.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA5b-r5LmQ55qE5Yay5rWq56CB5Yac,size_20,color_FFFFFF,t_70,g_se,x_16" alt="在这里插入图片描述" style="zoom:50%;" />
+
+```c
+int sock_fd,conn_fd; //监听套接字和已连接套接字的变量
+sock_fd = socket() //创建套接字
+bind(sock_fd)   //绑定套接字
+listen(sock_fd) //在套接字上进行监听，将套接字转为监听套接字
+    
+epfd = epoll_create(EPOLL_SIZE); //创建epoll实例，
+//创建epoll_event结构体数组，保存套接字对应文件描述符和监听事件类型    
+ep_events = (epoll_event*)malloc(sizeof(epoll_event) * EPOLL_SIZE);
+
+//创建epoll_event变量
+struct epoll_event ee
+//监听读事件
+ee.events = EPOLLIN;
+//监听的文件描述符是刚创建的监听套接字
+ee.data.fd = sock_fd;
+
+//将监听套接字加入到监听列表中    
+epoll_ctl(epfd, EPOLL_CTL_ADD, sock_fd, &ee); 
+    
+while (1) {
+   //等待返回已经就绪的描述符 
+   n = epoll_wait(epfd, ep_events, EPOLL_SIZE, -1); 
+   //遍历所有就绪的描述符     
+   for (int i = 0; i < n; i++) {
+       //如果是监听套接字描述符就绪，表明有一个新客户端连接到来 
+       if (ep_events[i].data.fd == sock_fd) { 
+          conn_fd = accept(sock_fd); //调用accept()建立连接
+          ee.events = EPOLLIN;  
+          ee.data.fd = conn_fd;
+          //添加对新创建的已连接套接字描述符的监听，监听后续在已连接套接字上的读事件      
+          epoll_ctl(epfd, EPOLL_CTL_ADD, conn_fd, &ee); 
+                
+       } else { //如果是已连接套接字描述符就绪，则可以读数据
+           ...//读取数据并处理
+       }
+   }
+}
+```
+
+
+
 ## 😊 复习
 
 > 8大数据类型
@@ -489,12 +743,38 @@ String的数据结构为简单动态字符串（SDS），是可以修改的字�
 
 内部为当前字符串实际分配的空间capacity，一般高于实际字符串长度len，当字符串长度小于1M时，扩容都是2倍，如果超过1M，扩容一次只多扩容1M空间。（最长512M）
 
+> 为什么redis不使用char*？
+
+- **char*的结构设计**
+
+  - 一块连续的内存空间，依次存放字符串的每一个字符；最后一个字符是`\0`，标识字符串的结束
+
+  - **影响**：如果保存的数据本身含有`\0`，那么数据会被截断，这就不符合redis希望能够保持任意数据的需求了
+
+  - **操作函数的复杂度**：
+
+    - 求数组长度，需要遍历每一个字符，复杂度是O（n）
+    - 追加字符，需要遍历字符串获得末尾完成追加，还需要保证空间足够
+
+    <img src="https://img-blog.csdnimg.cn/197459f2e1bc4a5e8a6b09a6389ae11d.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA5b-r5LmQ55qE5Yay5rWq56CB5Yac,size_18,color_FFFFFF,t_70,g_se,x_16" alt="在这里插入图片描述" style="zoom:50%;" />
+
+- **原因：不符合redis对字符串高效操作的需求**
+
+
+
 **SDS结构**
 
 - 主要由`len`（buf数据所保存字符串的长度）、`free`（未使用的字节数量）、`buf[]`（保存字符串的数组）三个属性组成
 
+
+
 <img src="https://img-blog.csdnimg.cn/e01985bdbd994d71aec1fe52945d27e1.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
 
+- **本质还是数据，只是增加了额外的元数据**
+- 追加操作：
+  - 获取目标字符串长度，根据当前长度和需要追加的长度判断空间是否足够
+  - 将数据拷贝到字符串结尾
+  - 设置字符串的最新长度
 - 优点
   - 效率高：使用`strlen`获取字符串长度在SDS中len属性记录了字符串长度，获取字符串长度的时间复杂度为O(1)
   - 数据溢出：SDS会自动扩容
@@ -840,6 +1120,33 @@ Hash对应的数据结构有两种：ziplist、hashtable
 - field-value长度较短且个数较少，使用ziplist
 - field-value长度较长且个数较多，使用hashtable
 
+#### Hash数据结构
+
+> 两个问题：**哈希冲突、rehash**
+>
+> Redis解决方案：
+>
+> - 哈希冲突：链式哈希
+> - rehash：渐进式rehash
+
+**1、链式哈希**
+
+- 用链表把映射到hash表同一个桶中的键连接起来
+
+2、**rehash**
+
+- redis准备了两个哈希表用于rehash时交替保存数据
+
+
+
+
+
+
+
+
+
+
+
 
 
 ### Zset有序集合
@@ -966,17 +1273,29 @@ zset是Redis提供的一个非常特别的数据结构，一方面等价于java�
 - **hash**，hash的作用是关联value和score，保障元素value的唯一性，可以通过元素value找到对应的score
 - **跳表**，目的是给value排序，根据score的范围获取元素列表
 
+> 为什么不用平衡二叉树？
+
+- 更加节省内存
+- 遍历更加友好
+- 更容易实现和维护
+
 #### 跳表
 
 1、可以实现二分查找的有序链表
 
 **2、查找的时间复杂度**
 
+- 过程：从最高级索引开始，一层一层遍历最后下沉到原始链表
 - 时间复杂度=索引高度*每层索引遍历元素的个数
 - O（Logn）
 
+<img src="https://img-blog.csdnimg.cn/d76ad8ea4e8149d0a806efab0223b060.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA5b-r5LmQ55qE5Yay5rWq56CB5Yac,size_20,color_FFFFFF,t_70,g_se,x_16" alt="在这里插入图片描述" style="zoom:50%;" />
+
 **3、空间复杂度**
 
+- 假设**每两个结点会抽出一个结点作为上一级索引的结点**，原始的链表有n个元素，则一级索引元素个数为n/2，二级索引元素个数n/4，所以索引节点的总和是：n/2 + n/4 + n/8 + … + 8 + 4 + 2 = n-2，**空间复杂度是 O(n)**。
+- 如果**每三个结点抽一个结点做为索引**，索引总和数就是 n/3 + n/9 + n/27 + … + 9 + 3 + 1= n/2，减少了一半
+- 因此，**可以通过减少索引数来减少空间复杂度**
 - O（n）
 
 **4、插入数据**
@@ -984,25 +1303,13 @@ zset是Redis提供的一个非常特别的数据结构，一方面等价于java�
 - 概率算法：告诉我们这个元素需要插入到几级索引中
 - 最坏时间复杂度：O（logn）
 
+<img src="https://img-blog.csdnimg.cn/cfd28470af644f7d9c9d2a961c70c1c1.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA5b-r5LmQ55qE5Yay5rWq56CB5Yac,size_20,color_FFFFFF,t_70,g_se,x_16" alt="在这里插入图片描述" style="zoom:30%;" />
 
+<img src="https://img-blog.csdnimg.cn/0dcb1affc4be42b68b50f6d1f66a4772.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA5b-r5LmQ55qE5Yay5rWq56CB5Yac,size_20,color_FFFFFF,t_70,g_se,x_16" alt="在这里插入图片描述" style="zoom:30%;" />
 
+<img src="/Users/zhangtao/Desktop/截屏2021-09-06 下午3.32.42.png" alt="截屏2021-09-06 下午3.32.42" style="zoom:33%;" />
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+<img src="/Users/zhangtao/Desktop/截屏2021-09-06 下午3.32.48.png" alt="截屏2021-09-06 下午3.32.48" style="zoom:40%;" />
 
 
 

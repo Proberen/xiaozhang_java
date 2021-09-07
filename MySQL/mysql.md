@@ -2056,29 +2056,126 @@ binlog_format=statement
 
 记录了执行时间超过`long_query_time`设置值并且扫描记录数不小于min_examined_row_limit的所有SQL语句的日志，默认10s。
 
-## 😊 MySQL复制
+## 😊 MySQL主备一致
 
 > 将主数据库的DDL和DML操作通过**二进制日志**传输到从库的数据库中，然后在从库上对这些日志重新执行
 >
 > MySQL支持一台主库同时向多台从库进行复制，从库同时也可以作为其他从服务器的主库，实现**链状复制**
 
-### 原理
+### 基本原理
 
-<img src="https://img-blog.csdnimg.cn/2021041222453293.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:60%;" />
+**1、主备切换的流程**
 
-1、Master主库在事务提交时，会把数据变更作为时间Events记录在二进制日志文件binlog中
+- 状态1：客户端读写都访问节点A，节点B是A的备库，只是将A的更新同步过来在本地执行，可以保持节点B和A数据相同
+- 状态2：当需要切换时就切换成状态2，这时候客户端访问B，节点A为节点B的备库
 
-2、主库推送二进制日志给从库的中继日志Relay log
+<img src="https://img-blog.csdnimg.cn/203c354c32874f42b7fd410b153ac9f8.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA5b-r5LmQ55qE5Yay5rWq56CB5Yac,size_20,color_FFFFFF,t_70,g_se,x_16" alt="在这里插入图片描述" style="zoom:50%;" />
 
-3、从库重做中继日志的时间，将改变反映自己的日志
+- **节点A到节点B的内部流程**
 
-### 优势
+  - 下图是update语句在A执行同步到B的完整流程
 
-主库出现问题，可以快速切换到从库提供服务
+    - 主库收到客户端更新请求后写入undolog、redolog、binlog
+    - B和A之间维持了一个**长连接**，主库A内部有一个线程专门用于服务B的这个长连接
 
-可以在从库执行查询，从主库中更新，实现读写分离，降低主库访问压力
+    <img src="https://img-blog.csdnimg.cn/608fe8dae29348ff8c5407ecf5b04982.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA5b-r5LmQ55qE5Yay5rWq56CB5Yac,size_20,color_FFFFFF,t_70,g_se,x_16" alt="在这里插入图片描述" style="zoom:50%;" />
 
-在从库执行备份
+- 事务日志同步的完整流程：
+  - 在B上通过change master命令，设置主库A的IP、端口、用户名、密码以及从哪个位置开始请求binlog（文件名、日志偏移量）
+  - 在B上执行start slave命令，这时候备库会启动两个线程，如上图`io_thread`、`sql_thread`，其中io_thread负责与主库建立连接
+  - A校验信息，开始按照B传来的位置信息从本地读取binlog，发送给B
+  - B拿到binlog后写入本地文件，称为**中转日志(relay log)**
+  - sql_thread读取中转日志后解析出日志里的命令并执行
+
+**2、循环复制问题**
+
+- 双M结构：A和B互为主备
+- **问题：B执行relay log会生成binlog，又发给了A，循环执行更新语句**
+- 解决：
+  - 规定两个库的server id（mysql在binlog中记录了这个命令第一次执行所在实例的server id）不同
+  - 一个备库接到binlog进行重放后，生成与原binlog的server id相同的binlog
+  - 每个库收到binlog后先判断serverid，如果和自己相同表示这个日志是自己生产的，丢弃
+
+<img src="https://img-blog.csdnimg.cn/a87732d216ff4ddea866c15a68e15e0b.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA5b-r5LmQ55qE5Yay5rWq56CB5Yac,size_20,color_FFFFFF,t_70,g_se,x_16" alt="在这里插入图片描述" style="zoom:50%;" />
+
+
+
+### Mysql保证高可用
+
+1、最终一致性
+
+- 主库的binlog都可以传到备库并被正确执行，备库就能达到和主库一致的状态
+
+**2、主备延迟**
+
+- 主备切换的场景：主动运维、被动
+- 主备延迟：备库执行完成的时间—主库执行完成的时间
+
+> 如果两个机器时间不一致会导致时主备延迟的值不准吗？
+>
+> - 备库连接到主库时会获取主库的时间，在计算主备延迟时会进行扣除
+
+- **主备延迟的最直接表现：备库消费relay log的速度比主库生产binlog的速度慢**
+
+**3、主备延迟的来源**
+
+- 备库机器性能
+- 备库压力大
+- 大事务：用delete语句删除很多数据、大表DDL
+- 备库的并行复制能力
+
+**4、可靠性优先策略**
+
+- 双M结构下，从状态1到状态2切换的过程：
+  - 判断备库B的`seconds_behind_master`（主备延迟时间），**如果小于某个值继续下一步，否则持续重试**
+  - 把主库A改成只读状态（**当前系统不可用，都是只读的**）
+  - 判断B的`seconds_behind_master`值，直到这个值变成0
+  - 把B改成可读写状态
+  - 把业务请求切换到B
+
+- **系统的不可用时间由数据可靠性优先的策略决定**
+
+**5、可用性优先策略**
+
+- 不等主备数据同步，直接把连接切到备库
+- 问题：数据不一致
+
+### 主从切换
+
+**1、基本的一主多从结构**
+
+- A和A'互为主备
+- 从库B、C、D指向主库A
+- **主备切换：A'成为新的主库，从库B、C、D接到A‘**
+
+<img src="https://img-blog.csdnimg.cn/b0a9a0dab8314a9eadd106c91de9a5b9.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA5b-r5LmQ55qE5Yay5rWq56CB5Yac,size_20,color_FFFFFF,t_70,g_se,x_16" alt="在这里插入图片描述" style="zoom:50%;" />
+
+**2、基于位点的主备切换**
+
+- 把节点B设置为节点A‘的从库时需要执行`change master`命令
+  - 参数：
+    - MASTER_HOST、MASTER_PORT、MASTER_USER 和 MASTER_PASSWORD 四个参数，分别代表了主库 A’的 IP、端口、用户名和密码
+    - MASTER_LOG_FILE 和 MASTER_LOG_POS 表示，要从主库的 master_log_name 文件的 master_log_pos 这个位置的日志继续同步。而这个位置就是我们所说的**同步位点**，也就是主库对应的文件名和日志偏移量。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
