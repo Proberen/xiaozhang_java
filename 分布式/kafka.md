@@ -814,19 +814,67 @@ Kafka的Java生产者API主要对象就是`KafkaProducer`，通常开发生产�
 - topic数量变化
 - partition数量变化
 
-## 4.9 Kafka位移提交
+## 4.9 重平衡
 
-**1、consumer端的消费位移（指向下一条消息），不同于消息在分区的位移**
+1、新版的消费者客户端对此进行了重新设计，将全部消费组分成多个子集，每个消费组的子集在服务端对应一个 GroupCoordinator 其进行管理， GroupCoordinator是Kafka 服务端中用于管理消费组的组件。而消费者客户端中的 ConsumerCoordinator 组件负责与 GroupCoordinator交互
 
-**2、位移提交**：consumer需要向kafka汇报自己的位移数据
+- ConsumerCoordinator和GroupCoordinator之间最重要的职责就是负责执行消费者重平衡的操作，包括分区分配工作也是在重平衡期间完成
 
-- 由于consumer可以同时消费多个分区的数据，所以位移提交在分区的粒度上进行
-- **目的**：表示consumer的消费进度，这样当consumer发生故障后可以从kafka读取之前提交的位移值，继续消费
+**2、触发重平衡的操作**
 
-3、位移提交的方法
+- 有新的消费者加入消费者组
+- 消费者下线，不一定真的下线，可能是长时间GC、网络延迟导致消费者长时间没有向GroupCorrdinator发送心跳
+- 消费者退出（leaveGroupRequest请求）
+- 消费者的GroupCoorinator节点发生变化
+- 消费者组订阅的任一topic或者partition数量发生变化
 
-- 用户角度：自动提交、手动提交
-- consumer端角度：同步提交、异步提交
+> 当有消费者加入消费者组时，消费者、消费组及协调器会经历以下阶段
+
+**3、第一阶段（find_coordinator）**
+
+- 目的：**消费者需要确定所属消费组对应的groupCoordinator所在的broker，并与该broker创建相互通信的网络连接**
+- 步骤：
+  - 如果消费者已经保存了对应协调器节点的信息就进入第二阶段
+  - 向**集群负载最小的节点**发送`FindCoordinatorRequest`请求来查找对应的`GroupCoordinator`
+    - `FindCoordinatorRequest`请求体：消费组名称（`group id`）
+  - kafka收到`FindCoordinatorRequest`请求后**根据groupid查找对应的`GroupCoordinator`节点**，如果找到对应的就会返回其对应的node_id、host、port信息
+    - 查找方法：
+      - 根据`groupid`的哈希值计算`__consumer_offsets`中分区的编号
+      - 寻找此分区leader副本所在的broker节点，该节点就是为这个groupid所对应的`GroupCoordinator`节点
+  - **消费者组groupid最终的分区方案及组内消费者所提交的消费位移信息都会发送给此分区leader副本所在的broker节点**
+
+**4、第二阶段（join_group）**
+
+- 目的：加入消费组
+- 步骤：
+  - 向`groupCoordinator`发送`JoinGroupRequest`请求
+    - 参数：
+      - `groupId`
+      - `session_timeout`（心跳时间）
+      - `rebalance_timeout`（重平衡的时候GroupCoordinator等待各个消费者重新加入的最长等待时机）
+      - `member_id`（消费者id，第一次发送时为null）
+  - 服务端接收到请求后交给GroupCoordinator处理；对请求进行合法性校验，给第一次请求加入的消费者生成member_id
+  - **选举消费组的leader**
+    - 如果还没有leader，第一个加入消费组的消费者为leader
+    - 如果leader退出了消费组，会进行重新选举，过程很随意
+      - 在GroupCoordinator中消费者信息以HashMap存储，key为消费者id，value为元数据
+      - 选举时取hashMap第一个键值对
+  - **选举分区分配策略**
+    - 每个消费者都可以设置自己的分区粉哦策略，消费组的策略需要进行选举投票，过程如下：
+      - 收集各个消费者支持的所有分配策略，组成候选集candidates
+      - 每个消费者从候选集中找出第一个自身支持的策略，投上一票
+      - 得分多的策略为消费组的策略
+
+**5、第三阶段（sync_group）**
+
+- 目的：转发同步分区分配方案；各个消费者给GroupCoordinator发送SyncGroupRequest请求来同步分配方案
+
+**6、第四阶段（heartbeat）**
+
+- 目的：消费者确定拉取消息的其实位置
+- 消费者通过向GroupCoordinator发送心跳来维持他们与消费组的从属关系，心跳线程是一个独立的线程；如果消费者停止发送心跳的时间足够长整个会话就会判定过期
+
+
 
 
 
