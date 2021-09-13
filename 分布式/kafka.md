@@ -60,7 +60,29 @@ Kafka体系结构：
   - Replica **副本**：为了保证集群中某个节点发生故障时，该节点上的partition数据不丢失，且kafka能过继续工作，一个topic的每个分区都有若干副本（**一个Leader和多个Follower**）
     - Leader：主，生产者发送数据的对象和消费者消费数据的对象
     - Follower：从，实时从leader同步数据，保持和leader数据同步
+  - **AR**：分区中所有的副本
+  - **ISR**：与leader副本保持一定程度同步的副本（包括leader副本）
+  - **HW**：高水位，标识特定的消息偏移量，消费者只能拉取这个offset之前的消息
+  - **LEO**：标识当前日志文件下一条写入消息的offset
+
+  > ISR、HW、LEO的关系
+  >
+  > - 初始状态：
+  >   - Leader消息：0、1、2
+  >   - follower1消息：0、1、2
+  >   - follower2消息：0、1、2
+  > - 发送消息3、4（情况1：follower2只收到3）
+  >   - Leader消息：0、1、2、3、4
+  >   - follower1消息：0、1、2、3、4
+  >   - follower2消息：0、1、2、3
+  >   - HW：4 ；LEO：5
+  > - 发送消息3、4（情况2）
+  >   - Leader消息：0、1、2、3、4
+  >   - follower1消息：0、1、2、3、4
+  >   - follower2消息：0、1、2、3、4
+  >   - HW：5 ；LEO：5
 - **Zookeeper**：
+  
   - 帮助kafka集群存储一些信息
   - 帮助消费者存储消费的位置信息offset
     - 0.9版本之前存储在zk
@@ -164,7 +186,7 @@ kafka-console-consumer --topic test --bootstrap-server localhost:9092 --from-beg
 - Kafka定期删除消息以回收磁盘
   - **日志段机制（Log Segment）**：将日志细分为多个日志段，消息被追加写入搭配当前最新的日志段中，写满一个日志段就自动切分一个新的日志段，将老的日志段封存起来，kakfa在后台有定时任务定期检查老的日志段是否能够被删除
 
-![在这里插入图片描述](https://img-blog.csdnimg.cn/75698a26aee845eaa0adcec32d0fc045.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70)
+<img src="https://img-blog.csdnimg.cn/75698a26aee845eaa0adcec32d0fc045.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1NjUwODk5,size_16,color_FFFFFF,t_70" alt="在这里插入图片描述" style="zoom:50%;" />
 
 ### 2.1.3 消费者
 
@@ -177,7 +199,7 @@ kafka-console-consumer --topic test --bootstrap-server localhost:9092 --from-beg
 **2、消费位移（offset）**
 
 - 随时变化，表示消费者的消费进度
-- 每个消费者都有自己的消费者喂哟
+- 每个消费者都有自己的消费者位移
 
 
 
